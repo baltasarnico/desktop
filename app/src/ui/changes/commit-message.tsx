@@ -58,6 +58,7 @@ import { PreferencesTab } from '../../models/preferences'
 import {
   RepoRuleEnforced,
   RepoRulesInfo,
+  RepoRulesMetadataFailure,
   RepoRulesMetadataFailures,
 } from '../../models/repo-rules'
 import { IAheadBehind } from '../../models/branch'
@@ -89,6 +90,28 @@ import { CopilotCommitPanel } from './copilot-commit-panel'
 
 /** Duration (in milliseconds) of the transition between commit modes */
 const CommitModeTransitionDuration = 300
+
+/**
+ * How long to wait after the last keystroke before checking the commit
+ * message against repository rules when doing so requires running Git.
+ */
+const RepoRulesCommitMessageCheckDelay = 250
+
+function areRepoRulesFailuresEqual(
+  a: RepoRulesMetadataFailures,
+  b: RepoRulesMetadataFailures
+) {
+  const sameList = (
+    x: ReadonlyArray<RepoRulesMetadataFailure>,
+    y: ReadonlyArray<RepoRulesMetadataFailure>
+  ) =>
+    x.length === y.length &&
+    x.every(
+      (f, i) =>
+        f.rulesetId === y[i].rulesetId && f.description === y[i].description
+    )
+  return sameList(a.failed, b.failed) && sameList(a.bypassed, b.bypassed)
+}
 
 const commitModeOptions: ReadonlyArray<
   IDropdownSelectButtonOption & { readonly id: CommitMode }
@@ -384,6 +407,8 @@ export class CommitMessage extends React.Component<
   private coAuthorInputRef = React.createRef<AuthorInput>()
   private shouldRestoreCommitModeFocus = false
   private mounted = false
+  private repoRulesCommitMessageCheckTimeout: number | undefined = undefined
+  private repoRulesCommitMessageCheckId = 0
 
   private readonly COMMIT_MSG_ERROR_BTN_ID = 'commit-message-failure-hint'
 
@@ -411,6 +436,7 @@ export class CommitMessage extends React.Component<
   // Persist our current commit message if the caller wants to
   public componentWillUnmount() {
     this.mounted = false
+    window.clearTimeout(this.repoRulesCommitMessageCheckTimeout)
     const { props, state } = this
     props.onPersistCommitMessage?.(state.commitMessage)
     window.removeEventListener('keydown', this.onKeyDown)
@@ -586,10 +612,50 @@ export class CommitMessage extends React.Component<
           this.state.commitMessage.generatedByCopilot ?? false,
       }
 
-      const msg = await formatCommitMessage(this.props.repository, context)
-      const failures =
-        this.props.repoRulesInfo.commitMessagePatterns.getFailedRules(msg)
+      const onlyMessageChanged =
+        !forceUpdate &&
+        prevProps?.coAuthors === this.props.coAuthors &&
+        prevProps?.commitToAmend === this.props.commitToAmend &&
+        prevProps?.repository === this.props.repository &&
+        prevProps?.repoRulesInfo.commitMessagePatterns ===
+          this.props.repoRulesInfo.commitMessagePatterns
 
+      window.clearTimeout(this.repoRulesCommitMessageCheckTimeout)
+
+      // With trailers, formatting the message runs `git interpret-trailers`,
+      // so don't spawn Git on every keystroke while the user is typing.
+      if (onlyMessageChanged && (context.trailers?.length ?? 0) > 0) {
+        this.repoRulesCommitMessageCheckTimeout = window.setTimeout(
+          () => this.checkRepoRulesCommitMessage(context),
+          RepoRulesCommitMessageCheckDelay
+        )
+        return
+      }
+
+      await this.checkRepoRulesCommitMessage(context)
+    }
+  }
+
+  private async checkRepoRulesCommitMessage(context: ICommitContext) {
+    const requestId = ++this.repoRulesCommitMessageCheckId
+    const { repository, repoRulesInfo } = this.props
+    const msg = await formatCommitMessage(repository, context)
+
+    // A newer check has started in the meantime, its result wins.
+    if (!this.mounted || requestId !== this.repoRulesCommitMessageCheckId) {
+      return
+    }
+
+    const failures = repoRulesInfo.commitMessagePatterns.getFailedRules(msg)
+
+    // Avoid re-rendering the commit message on every keystroke when the
+    // outcome of the rules didn't change.
+    if (
+      !areRepoRulesFailuresEqual(
+        failures,
+        this.state.repoRuleCommitMessageFailures
+      )
+    ) {
       this.setState({ repoRuleCommitMessageFailures: failures })
     }
   }
