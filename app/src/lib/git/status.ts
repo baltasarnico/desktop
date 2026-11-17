@@ -393,8 +393,11 @@ async function getMergeConflictDetails(
   repository: Repository,
   conflictedFilesInIndex: ReadonlyArray<IStatusEntry>
 ) {
+  // Marker counts are only used for conflicted files, so don't scan every
+  // other changed file in the working directory.
   const conflictCountsByPath = await getFilesWithConflictMarkers(
-    repository.path
+    repository.path,
+    conflictedFilesInIndex.map(e => e.path)
   )
   const binaryFilePaths = await getBinaryPaths(
     repository,
@@ -411,8 +414,11 @@ async function getRebaseConflictDetails(
   repository: Repository,
   conflictedFilesInIndex: ReadonlyArray<IStatusEntry>
 ) {
+  // Marker counts are only used for conflicted files, so don't scan every
+  // other changed file in the working directory.
   const conflictCountsByPath = await getFilesWithConflictMarkers(
-    repository.path
+    repository.path,
+    conflictedFilesInIndex.map(e => e.path)
   )
   const binaryFilePaths = await getBinaryPaths(
     repository,
@@ -433,8 +439,11 @@ async function getWorkingDirectoryConflictDetails(
   repository: Repository,
   conflictedFilesInIndex: ReadonlyArray<IStatusEntry>
 ) {
+  // Marker counts are only used for conflicted files, so don't scan every
+  // other changed file in the working directory.
   const conflictCountsByPath = await getFilesWithConflictMarkers(
-    repository.path
+    repository.path,
+    conflictedFilesInIndex.map(e => e.path)
   )
   let binaryFilePaths: ReadonlyArray<string> = []
   try {
