@@ -9550,6 +9550,12 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this.repositoryIndicatorUpdater.resume()
       if (this.selectedRepository instanceof Repository) {
         this.startPullRequestUpdater(this.selectedRepository)
+        // Resume background fetching paused on blur. Starting without skew
+        // fetches right away if a fetch is overdue (see shouldBackgroundFetch)
+        // so the ahead/behind counts catch up as soon as the app is used.
+        if (this.currentBackgroundFetcher === null) {
+          this.startBackgroundFetching(this.selectedRepository, false)
+        }
         // if we're in the tutorial and we don't have an editor yet, check for one!
         if (this.currentOnboardingTutorialStep === TutorialStep.PickEditor) {
           await this._resolveCurrentEditor()
@@ -9558,6 +9564,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
     } else {
       this.repositoryIndicatorUpdater.pause()
       this.stopPullRequestUpdater()
+      // Don't wake up to fetch (and refresh) while the app isn't being used.
+      this.stopBackgroundFetching()
     }
   }
 

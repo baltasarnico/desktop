@@ -271,4 +271,26 @@ describe('AppStore branch comparison and repository memory', () => {
     appStore['onGitStoreUpdated'](repository, gitStore)
     assert.equal(emitUpdate.mock.callCount(), 1)
   })
+
+  it('pauses background fetching while the app is unfocused', async t => {
+    const { repository } = await setupComparison(t)
+    const previous = appStore['selectedRepository']
+    t.after(() => (appStore['selectedRepository'] = previous))
+    appStore['selectedRepository'] = repository
+
+    const fetcher = { stop: t.mock.fn() }
+    appStore['currentBackgroundFetcher'] = fetcher as never
+    await appStore._setAppFocusState(false)
+    assert.equal(fetcher.stop.mock.callCount(), 1)
+    assert.equal(appStore['currentBackgroundFetcher'], null)
+
+    const start = t.mock.method(
+      appStore,
+      'startBackgroundFetching' as never,
+      () => {}
+    )
+    await appStore._setAppFocusState(true)
+    assert.equal(start.mock.callCount(), 1)
+    assert.deepEqual(start.mock.calls[0].arguments, [repository, false])
+  })
 })

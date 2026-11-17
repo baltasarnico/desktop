@@ -23,6 +23,15 @@ const MinimumInterval = 1000 * 5 * 60
  */
 const SkewUpperBound = 30 * 1000
 
+/**
+ * Poll intervals returned by the API, keyed by repository, so that resuming
+ * fetching (e.g. every time the app regains focus) doesn't ask the API again.
+ */
+const pollIntervals = new Map<
+  string,
+  { readonly interval: number; readonly expires: number }
+>()
+
 /** The class which handles doing background fetches of the repository. */
 export class BackgroundFetcher {
   /** The handle for our setTimeout invocation. */
@@ -127,6 +136,12 @@ export class BackgroundFetcher {
 
     let interval = DefaultFetchInterval
 
+    const cacheKey = `${account?.endpoint}:${repository.owner.login}/${repository.name}`
+    const cached = pollIntervals.get(cacheKey)
+    if (cached !== undefined && cached.expires > Date.now()) {
+      return cached.interval + skewInterval()
+    }
+
     if (account) {
       const api = API.fromAccount(account)
 
@@ -140,6 +155,10 @@ export class BackgroundFetcher {
         } else {
           interval = DefaultFetchInterval
         }
+        pollIntervals.set(cacheKey, {
+          interval,
+          expires: Date.now() + interval,
+        })
       } catch (e) {
         log.error('Error fetching poll interval', e)
       }
