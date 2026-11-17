@@ -71,7 +71,8 @@ export function showTestUI(
         onDismiss: () => {},
       })
     case 'test-icons':
-      return showIconTestDialog()
+      // Only bundled in development builds, see PopupType.TestIcons in app.tsx
+      return __DEV__ ? showIconTestDialog() : undefined
     case 'test-invalidated-account-token':
       return dispatcher.showPopup({
         type: PopupType.InvalidatedToken,

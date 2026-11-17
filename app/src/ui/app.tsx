@@ -192,7 +192,6 @@ import { UnknownAuthors } from './unknown-authors/unknown-authors-dialog'
 import { UnsupportedOSBannerDismissedAtKey } from './banners/os-version-no-longer-supported-banner'
 import { offsetFromNow } from '../lib/offset-from'
 import { getNumber } from '../lib/local-storage'
-import { IconPreviewDialog } from './octicons/icon-preview-dialog'
 import { isCertificateErrorSuppressedFor } from '../lib/suppress-certificate-error'
 import { webUtils } from 'electron'
 import { showTestUI } from './lib/test-ui-components/test-ui-components'
@@ -2823,12 +2822,20 @@ export class App extends React.Component<IAppProps, IAppState> {
         )
       }
       case PopupType.TestIcons: {
-        return (
-          <IconPreviewDialog
-            key="octicons-preview"
-            onDismissed={onPopupDismissedFn}
-          />
-        )
+        // The preview references every octicon, so importing it statically
+        // would keep all of them in the production bundle. Webpack drops
+        // this branch (and with it the import) from non-development builds.
+        if (__DEV__) {
+          const { IconPreviewDialog } =
+            require('./octicons/icon-preview-dialog') as typeof import('./octicons/icon-preview-dialog')
+          return (
+            <IconPreviewDialog
+              key="octicons-preview"
+              onDismissed={onPopupDismissedFn}
+            />
+          )
+        }
+        return null
       }
       case PopupType.ConfirmCommitFilteredChanges: {
         return (
