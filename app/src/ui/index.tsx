@@ -39,6 +39,7 @@ import {
 } from '../lib/stores'
 import { GitHubUserDatabase } from '../lib/databases'
 import { SelectionType, IAppState } from '../lib/app-state'
+import { createCoalescingRunner } from '../lib/coalescing-runner'
 import { StatsDatabase, StatsStore } from '../lib/stats'
 import {
   IssuesDatabase,
@@ -369,16 +370,34 @@ initializeRendererNotificationHandler(notificationsStore)
 // The trampoline UI helper needs a reference to the dispatcher before it's used
 trampolineUIHelper.setDispatcher(dispatcher)
 
+/**
+ * Focus refreshes are coalesced per repository: while one is running at most
+ * one more is queued, so rapid focus changes (alt-tabbing, focus-follows-mouse)
+ * don't stack up full refreshes. Only focus-triggered refreshes go through
+ * this, as refreshes started from within a refresh must not wait on it.
+ */
+const refreshOnFocus = createCoalescingRunner<number>()
+
+/** Focus events closer together than this don't trigger another refresh. */
+const MinimumFocusRefreshInterval = 1000
+let lastFocusRefresh = 0
+
 ipcRenderer.on('focus', () => {
   const { selectedState } = appStore.getState()
 
   // Refresh the currently selected repository on focus (if
   // we have a selected repository, that is not cloning).
+  const now = Date.now()
   if (
     selectedState &&
-    !(selectedState.type === SelectionType.CloningRepository)
+    !(selectedState.type === SelectionType.CloningRepository) &&
+    now - lastFocusRefresh >= MinimumFocusRefreshInterval
   ) {
-    dispatcher.refreshRepository(selectedState.repository)
+    lastFocusRefresh = now
+    const { repository } = selectedState
+    refreshOnFocus(repository.id, () =>
+      dispatcher.refreshRepository(repository)
+    ).catch(e => log.error('Failed to refresh repository on focus', e))
   }
 
   dispatcher.setAppFocusState(true)

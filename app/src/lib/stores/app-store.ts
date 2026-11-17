@@ -4443,9 +4443,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this._refreshAuthor(repository),
       this._refreshWorktrees(repository),
       refreshSectionPromise,
+      gitStore.refreshTags(),
     ])
-
-    await gitStore.refreshTags()
 
     // this promise is fire-and-forget, so no need to await it
     this.updateStashEntryCountMetric(
