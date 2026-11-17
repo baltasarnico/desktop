@@ -1,4 +1,4 @@
-import {
+import type {
   ITerminalOptions,
   ITerminalInitOnlyOptions,
   Terminal as XTermTerminal,
@@ -20,15 +20,28 @@ export type TerminalProps = ITerminalOptions &
     readonly hideCursor?: boolean
   }
 
+/**
+ * A read only terminal for showing Git output.
+ *
+ * xterm.js is loaded when the first terminal is shown rather than at startup,
+ * output written before it has loaded is buffered.
+ */
 export class Terminal extends React.Component<TerminalProps> {
   private terminalRef = React.createRef<HTMLDivElement>()
   private terminal: XTermTerminal | null = null
+  private pendingOutput = new Array<TerminalOutput>()
+  private unmounted = false
 
   public get Terminal() {
     return this.terminal
   }
 
   public write(data: TerminalOutput) {
+    if (this.terminal === null) {
+      this.pendingOutput.push(data)
+      return
+    }
+
     if (Array.isArray(data)) {
       data.forEach(chunk => this.terminal?.write(chunk))
     } else {
@@ -37,12 +50,19 @@ export class Terminal extends React.Component<TerminalProps> {
   }
 
   public componentWillUnmount(): void {
+    this.unmounted = true
+    this.pendingOutput = []
     this.terminal?.dispose()
   }
 
-  public componentDidMount() {
+  public async componentDidMount() {
+    const { Terminal: XTermTerminal } = await import('@xterm/xterm')
+    if (this.unmounted) {
+      return
+    }
+
     const { terminalOutput, hideCursor, ...initOpts } = this.props
-    this.terminal = new XTermTerminal({
+    const terminal = new XTermTerminal({
       ...defaultTerminalOptions,
       ...initOpts,
 
@@ -50,7 +70,8 @@ export class Terminal extends React.Component<TerminalProps> {
       cols: this.props.cols ?? 80,
     })
 
-    this.terminal.attachCustomKeyEventHandler((key: KeyboardEvent) => {
+    this.terminal = terminal
+    terminal.attachCustomKeyEventHandler((key: KeyboardEvent) => {
       if (key.key === 'Tab') {
         // We don't want to handle tab key events in the terminal as it
         // breaks tab navigation in the app. The terminal is read only and
@@ -61,15 +82,19 @@ export class Terminal extends React.Component<TerminalProps> {
     })
 
     if (this.terminalRef.current) {
-      this.terminal.open(this.terminalRef.current)
+      terminal.open(this.terminalRef.current)
 
       if (hideCursor !== false) {
-        this.terminal.write('\x1b[?25l') // hide cursor
+        terminal.write('\x1b[?25l') // hide cursor
         if (terminalOutput) {
           this.write(terminalOutput)
         }
       }
     }
+
+    const pending = this.pendingOutput
+    this.pendingOutput = []
+    pending.forEach(output => this.write(output))
   }
 
   public render() {
