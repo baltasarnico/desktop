@@ -58,7 +58,9 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'fs'
@@ -133,7 +135,7 @@ verifyInjectedSassVariables(outRoot)
     }
 
     console.log('Packaging…')
-    return packageApp()
+    return packageApp().then(makeSymlinksRelative)
   })
   .catch(err => {
     console.error(err)
@@ -142,6 +144,49 @@ verifyInjectedSassVariables(outRoot)
   .then(appPaths => {
     console.log(`Built to ${appPaths}`)
   })
+
+/**
+ * When keeping symlinks (Linux), the packager recreates them with absolute
+ * targets in the staging directory. Point them at the same files within the
+ * packaged app instead, so the app can be moved and installed elsewhere.
+ */
+function makeSymlinksRelative(appPaths: ReadonlyArray<string>) {
+  if (process.platform !== 'linux') {
+    return appPaths
+  }
+
+  for (const appPath of appPaths) {
+    const appRoot = path.join(appPath, 'resources', 'app')
+    const entries = readdirSync(appRoot, {
+      recursive: true,
+      withFileTypes: true,
+    })
+    for (const entry of entries) {
+      if (!entry.isSymbolicLink()) {
+        continue
+      }
+
+      const linkPath = path.join(entry.parentPath, entry.name)
+      const target = readlinkSync(linkPath)
+      if (!path.isAbsolute(target)) {
+        continue
+      }
+
+      const pathInApp = path.relative(outRoot, target)
+      if (pathInApp.startsWith('..') || path.isAbsolute(pathInApp)) {
+        throw new Error(`Symlink ${linkPath} points outside the app: ${target}`)
+      }
+
+      unlinkSync(linkPath)
+      symlinkSync(
+        path.relative(path.dirname(linkPath), path.join(appRoot, pathInApp)),
+        linkPath
+      )
+    }
+  }
+
+  return appPaths
+}
 
 async function packageApp() {
   const packagerModuleName = '@electron/packager'
@@ -214,7 +259,10 @@ async function packageApp() {
     dir: outRoot,
     overwrite: true,
     tmpdir: false,
-    derefSymlinks: true,
+    // Keep symlinks on Linux: Git's builtins are symlinks to the git binary
+    // and dereferencing them adds ~600 MB of identical copies. All symlinks
+    // in the staged app point within it.
+    derefSymlinks: process.platform !== 'linux',
     prune: false, // We'll prune them ourselves below.
     ignore: [
       new RegExp('/node_modules/electron($|/)'),

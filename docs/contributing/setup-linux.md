@@ -49,6 +49,17 @@ examples of distributions we've tested.
 $ sudo dnf install -y libsecret-devel libXScrnSaver
 ```
 
+### Arch Linux and derivatives
+
+```shellsession
+$ sudo pacman -S --needed base-devel python libsecret libxss
+```
+
+Note that npm 11 doesn't run the install scripts of a few build dependencies
+(`printenvz`, `process-proxy`, `esbuild`). If the build complains about them
+missing, run their install step manually, e.g.
+`(cd node_modules/printenvz && npx node-gyp rebuild)`.
+
 ### Ubuntu 14.04 and later
 
 ```shellsession

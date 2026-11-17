@@ -17,9 +17,10 @@ import {
   getDistRoot,
   getDistArchitecture,
   getIconDirectory,
+  getLinuxArchivePath,
 } from './dist-info'
 import { isGitHubActions } from './build-platforms'
-import { existsSync, rmSync, writeFileSync } from 'fs'
+import { cpSync, existsSync, rmSync, writeFileSync } from 'fs'
 import { getVersion } from '../app/package-info'
 import { computeBundleHashSync } from '../app/src/lib/compute-bundle-hash'
 import { rename } from 'fs/promises'
@@ -40,6 +41,8 @@ if (process.platform === 'darwin') {
   packageOSX()
 } else if (process.platform === 'win32') {
   packageWindows()
+} else if (process.platform === 'linux') {
+  packageLinux()
 } else {
   console.error(`I don't know how to package for ${process.platform} :(`)
   process.exit(1)
@@ -67,6 +70,38 @@ function packageOSX() {
   cp.execSync(
     `ditto -ck --keepParent "${distPath}/${productName}.app" "${dest}"`
   )
+}
+
+/**
+ * Package the app as a tarball which installs itself for the current user,
+ * see script/linux/install.sh.
+ */
+function packageLinux() {
+  const dest = getLinuxArchivePath()
+  rmSync(dest, { force: true })
+
+  console.log('Packaging for Linux…')
+  const linuxDir = path.join(__dirname, 'linux')
+  cpSync(
+    path.join(linuxDir, 'github-desktop.desktop'),
+    path.join(distPath, 'github-desktop.desktop.in')
+  )
+  cpSync(
+    path.join(__dirname, '..', 'app', 'static', 'linux', 'icon-logo.png'),
+    path.join(distPath, 'github-desktop.png')
+  )
+  for (const script of ['install.sh', 'uninstall.sh']) {
+    cpSync(path.join(linuxDir, script), path.join(distPath, script))
+  }
+
+  cp.execFileSync('tar', [
+    '-czf',
+    dest,
+    '-C',
+    path.dirname(distPath),
+    path.basename(distPath),
+  ])
+  console.log(`Packaged to ${dest}`)
 }
 
 function packageWindows() {

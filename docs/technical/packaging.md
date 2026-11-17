@@ -116,8 +116,26 @@ Other things to note about the Windows packaging process:
 
 ### Linux
 
-Refer to the [`shiftkey/desktop`](https://github.com/shiftkey/desktop) fork
-for packaging details about Linux.
+`script/package.ts` creates `dist/GitHubDesktop-<version>-linux-<arch>.tar.gz`
+from the packaged app, adding:
+
+ - `install.sh`, which installs the app for the current user (no root
+   required) into `~/.local/opt/github-desktop` (or `$PREFIX/opt/...`), adds a
+   `github-desktop` command to `~/.local/bin`, a menu entry and icon, and
+   registers the app as the handler for the `x-github-client` and sign-in
+   (`x-github-desktop-auth`, `x-github-desktop-dev-auth`) URL schemes
+ - `uninstall.sh`, which removes all of the above (settings in
+   `~/.config/GitHub Desktop` are kept)
+
+```shellsession
+$ npm run build:prod && npm run package
+$ tar -xzf dist/GitHubDesktop-*-linux-x64.tar.gz -C /tmp
+$ /tmp/desktop-linux-x64/install.sh
+```
+
+Protocol handlers are registered by the installer through the `.desktop` file
+(`script/linux/github-desktop.desktop`); the app doesn't register them itself
+on Linux. The URL is passed to the app as a command line argument.
 
 ## `script/publish.ts`
 

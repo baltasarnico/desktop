@@ -319,6 +319,14 @@ function handleCLIAction(action: CLIAction) {
  * custom prefix command line switches on Windows.
  */
 function setAsDefaultProtocolClient(protocol: string) {
+  if (__LINUX__) {
+    // On Linux the handlers are registered when installing (through the
+    // MimeType entries of the .desktop file, see script/linux/install.sh).
+    // Electron would otherwise try to register a .desktop file name of its
+    // own choosing, which doesn't match the installed one.
+    return
+  }
+
   if (__WIN32__) {
     app.setAsDefaultProtocolClient(protocol, process.execPath, [
       protocolLauncherArg,
