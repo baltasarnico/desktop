@@ -11,7 +11,17 @@ import {
   HeadersReceivedResponse,
   OnSendHeadersListenerDetails,
   OnBeforeRedirectListenerDetails,
+  WebRequestFilter,
 } from 'electron/main'
+
+/**
+ * All of our filters only deal with network requests, so don't route every
+ * `file:` (and other internal) resource load through JavaScript in the main
+ * process.
+ */
+const NetworkRequestFilter: WebRequestFilter = {
+  urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'],
+}
 
 type SyncListener<TDetails> = (details: TDetails) => void
 
@@ -133,12 +143,12 @@ export class OrderedWebRequest {
   public readonly onSendHeaders: SyncListenerSet<OnSendHeadersListenerDetails>
 
   public constructor(webRequest: WebRequest) {
-    this.onBeforeRedirect = new SyncListenerSet(
-      webRequest.onBeforeRedirect.bind(webRequest)
+    this.onBeforeRedirect = new SyncListenerSet(listener =>
+      webRequest.onBeforeRedirect(NetworkRequestFilter, listener)
     )
 
     this.onBeforeRequest = new AsyncListenerSet(
-      webRequest.onBeforeRequest.bind(webRequest),
+      listener => webRequest.onBeforeRequest(NetworkRequestFilter, listener),
       async (listeners, details) => {
         let response: CallbackResponse = {}
 
@@ -158,7 +168,8 @@ export class OrderedWebRequest {
     )
 
     this.onBeforeSendHeaders = new AsyncListenerSet(
-      webRequest.onBeforeSendHeaders.bind(webRequest),
+      listener =>
+        webRequest.onBeforeSendHeaders(NetworkRequestFilter, listener),
       async (listeners, initialDetails) => {
         let details = initialDetails
         let response: BeforeSendResponse = {}
@@ -186,16 +197,16 @@ export class OrderedWebRequest {
       }
     )
 
-    this.onCompleted = new SyncListenerSet(
-      webRequest.onCompleted.bind(webRequest)
+    this.onCompleted = new SyncListenerSet(listener =>
+      webRequest.onCompleted(NetworkRequestFilter, listener)
     )
 
-    this.onErrorOccurred = new SyncListenerSet(
-      webRequest.onErrorOccurred.bind(webRequest)
+    this.onErrorOccurred = new SyncListenerSet(listener =>
+      webRequest.onErrorOccurred(NetworkRequestFilter, listener)
     )
 
     this.onHeadersReceived = new AsyncListenerSet(
-      webRequest.onHeadersReceived.bind(webRequest),
+      listener => webRequest.onHeadersReceived(NetworkRequestFilter, listener),
       async (listeners, initialDetails) => {
         let details = initialDetails
         let response: HeadersReceivedResponse = {}
@@ -223,12 +234,12 @@ export class OrderedWebRequest {
       }
     )
 
-    this.onResponseStarted = new SyncListenerSet(
-      webRequest.onResponseStarted.bind(webRequest)
+    this.onResponseStarted = new SyncListenerSet(listener =>
+      webRequest.onResponseStarted(NetworkRequestFilter, listener)
     )
 
-    this.onSendHeaders = new SyncListenerSet(
-      webRequest.onSendHeaders.bind(webRequest)
+    this.onSendHeaders = new SyncListenerSet(listener =>
+      webRequest.onSendHeaders(NetworkRequestFilter, listener)
     )
   }
 }

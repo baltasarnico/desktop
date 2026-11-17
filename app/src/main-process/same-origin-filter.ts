@@ -74,4 +74,9 @@ export function installSameOriginFilter(orderedWebRequest: OrderedWebRequest) {
   orderedWebRequest.onCompleted.addEventListener(details =>
     requestOrigin.delete(details.id)
   )
+
+  // Failed and cancelled requests never complete, forget about them too.
+  orderedWebRequest.onErrorOccurred.addEventListener(details =>
+    requestOrigin.delete(details.id)
+  )
 }

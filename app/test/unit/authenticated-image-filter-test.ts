@@ -18,7 +18,7 @@ function createWebRequest() {
   const webRequest = {
     onBeforeRedirect() {},
     onBeforeRequest() {},
-    onBeforeSendHeaders(value: typeof listener) {
+    onBeforeSendHeaders(_filter: unknown, value: typeof listener) {
       listener = value
     },
     onCompleted() {},
