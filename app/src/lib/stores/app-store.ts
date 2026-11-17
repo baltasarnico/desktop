@@ -734,6 +734,18 @@ export class AppStore extends TypedBaseStore<IAppState> {
 
   private currentMergeTreePromise: Promise<void> | null = null
 
+  /**
+   * Per repository id, the inputs the compare list was last loaded for. See
+   * `getCompareKey`.
+   */
+  private readonly lastCompareKeys = new Map<number, string>()
+
+  /**
+   * Results of `determineMergeability`, which only depend on the repository
+   * and the two commits being merged. Bounded, oldest entries are evicted.
+   */
+  private readonly mergeabilityCache = new Map<string, MergeTreeResult>()
+
   /** The function to resolve the current Open in Desktop flow. */
   private resolveOpenInDesktop:
     | ((repository: Repository | null) => void)
@@ -1918,7 +1930,44 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const cachedState = compareState.formState
     const action =
       initialAction != null ? initialAction : getInitialAction(cachedState)
+
+    // Refreshes (no explicit action) re-run the current comparison. When
+    // neither branch moved, the result can't have changed, so skip the
+    // ahead/behind count, commit loading and merge simulation.
+    if (
+      initialAction == null &&
+      action.kind === HistoryTabMode.Compare &&
+      this.lastCompareKeys.get(repository.id) ===
+        this.getCompareKey(repository, action)
+    ) {
+      return
+    }
+
     await this._executeCompare(repository, action)
+  }
+
+  /**
+   * Describes everything the compare list for an action depends on: the
+   * current tip and the comparison branch's current tip.
+   */
+  private getCompareKey(repository: Repository, action: ICompareToBranch) {
+    const { tip, allBranches } = this.gitStoreCache.get(repository)
+    const currentSha =
+      tip.kind === TipState.Valid
+        ? tip.branch.tip.sha
+        : tip.kind === TipState.Detached
+        ? tip.currentSha
+        : null
+    const comparisonSha =
+      allBranches.find(b => b.name === action.branch.name)?.tip.sha ??
+      action.branch.tip.sha
+
+    return JSON.stringify([
+      currentSha,
+      action.branch.name,
+      comparisonSha,
+      action.comparisonMode,
+    ])
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
@@ -2005,6 +2054,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
     const gitStore = this.gitStoreCache.get(repository)
 
     const comparisonBranch = action.branch
+    const compareKey = this.getCompareKey(repository, action)
+    this.lastCompareKeys.delete(repository.id)
     const compare = await gitStore.getCompareCommits(
       comparisonBranch,
       action.comparisonMode
@@ -2041,6 +2092,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
       filterText: comparisonBranch.name,
       commitSHAs,
     }))
+    this.lastCompareKeys.set(repository.id, compareKey)
 
     const tip = gitStore.tip
 
@@ -2092,16 +2144,33 @@ export class AppStore extends TypedBaseStore<IAppState> {
     baseBranch: Branch,
     compareBranch: Branch
   ) {
+    const cacheKey = `${repository.id}:${baseBranch.tip.sha}:${compareBranch.tip.sha}`
+    const cached = this.mergeabilityCache.get(cacheKey)
+    if (cached !== undefined) {
+      return Promise.resolve(cached)
+    }
+
     return promiseWithMinimumTimeout(
       () => determineMergeability(repository, baseBranch, compareBranch),
       500
-    ).catch(err => {
-      log.warn(
-        `Error occurred while trying to merge ${baseBranch.name} (${baseBranch.tip.sha}) and ${compareBranch.name} (${compareBranch.tip.sha})`,
-        err
-      )
-      return null
-    })
+    )
+      .then(result => {
+        if (this.mergeabilityCache.size >= 100) {
+          const oldest = this.mergeabilityCache.keys().next().value
+          if (oldest !== undefined) {
+            this.mergeabilityCache.delete(oldest)
+          }
+        }
+        this.mergeabilityCache.set(cacheKey, result)
+        return result
+      })
+      .catch(err => {
+        log.warn(
+          `Error occurred while trying to merge ${baseBranch.name} (${baseBranch.tip.sha}) and ${compareBranch.name} (${compareBranch.tip.sha})`,
+          err
+        )
+        return null
+      })
   }
 
   /** This shouldn't be called directly. See `Dispatcher`. */
