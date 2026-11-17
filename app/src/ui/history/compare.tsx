@@ -524,13 +524,21 @@ export class CompareSidebar extends React.Component<
     const compareState = this.props.compareState
     const formState = compareState.formState
 
+    const commits = compareState.commitSHAs
+
+    // Comparisons load their commits in batches too, stop once all commits
+    // between the two branches have been loaded.
     if (formState.kind === HistoryTabMode.Compare) {
-      // as the app is currently comparing the current branch to some other
-      // branch, everything needed should be loaded
-      return
+      const { comparisonMode, aheadBehind } = formState
+      const total =
+        comparisonMode === ComparisonMode.Ahead
+          ? aheadBehind.ahead
+          : aheadBehind.behind
+      if (commits.length >= total) {
+        return
+      }
     }
 
-    const commits = compareState.commitSHAs
     if (commits.length - end <= CloseToBottomThreshold) {
       if (this.loadingMoreCommitsPromise != null) {
         // as this callback fires for any scroll event we need to guard

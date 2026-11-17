@@ -175,6 +175,7 @@ import {
 import { shell } from '../app-shell'
 import {
   CompareAction,
+  ComparisonMode,
   HistoryTabMode,
   Foldout,
   FoldoutType,
@@ -2303,6 +2304,34 @@ export class AppStore extends TypedBaseStore<IAppState> {
       }
 
       if (!newCommits) {
+        return
+      }
+
+      this.repositoryStateCache.updateCompareState(repository, () => ({
+        commitSHAs: commits.concat(newCommits),
+      }))
+      this.emitUpdate()
+    } else if (formState.kind === HistoryTabMode.Compare) {
+      const { comparisonBranch, comparisonMode, aheadBehind } = formState
+      const commits = state.compareState.commitSHAs
+      const total =
+        comparisonMode === ComparisonMode.Ahead
+          ? aheadBehind.ahead
+          : aheadBehind.behind
+
+      if (commits.length >= total) {
+        return
+      }
+
+      const newCommits = await gitStore.loadCompareCommitBatch(
+        comparisonBranch,
+        comparisonMode,
+        commits.length
+      )
+
+      // Only append when the comparison didn't change in the meantime
+      const latest = this.repositoryStateCache.get(repository).compareState
+      if (newCommits === null || latest.commitSHAs !== commits) {
         return
       }
 

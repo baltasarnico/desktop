@@ -293,4 +293,37 @@ describe('AppStore branch comparison and repository memory', () => {
     assert.equal(start.mock.callCount(), 1)
     assert.deepEqual(start.mock.calls[0].arguments, [repository, false])
   })
+
+  it('loads distant comparisons in batches', async t => {
+    const { local, repository, defaultBranch } = await setupComparison(t)
+    const { switchTo } = await import('../../helpers/repository-scaffolding')
+    const { exec } = await import('dugite')
+    await switchTo(local, 'feature')
+    for (let i = 0; i < 149; i++) {
+      await exec(['commit', '--allow-empty', '-qm', `c${i}`], local.path)
+    }
+    await switchTo(local, defaultBranch)
+    const gitStore = appStore['gitStoreCache'].get(repository)
+    await gitStore.loadBranches()
+    const feature = gitStore.allBranches.find(b => b.name === 'feature')
+    assert.ok(feature)
+
+    await appStore._executeCompare(repository, {
+      kind: HistoryTabMode.Compare,
+      branch: feature,
+      comparisonMode: ComparisonMode.Behind,
+    })
+    const compareState = () =>
+      stores.repositoryStateCache.get(repository).compareState
+    assert.equal(compareState().commitSHAs.length, 100)
+
+    await appStore._loadNextCommitBatch(repository)
+    assert.equal(compareState().commitSHAs.length, 150)
+    assert.equal(new Set(compareState().commitSHAs).size, 150)
+
+    const commands = await gitCommands(t, () =>
+      appStore._loadNextCommitBatch(repository)
+    )
+    assert.deepEqual(commands, [])
+  })
 })

@@ -115,6 +115,17 @@ let nextCommitInputsRevision = 0
 const RecentBranchesLimit = 5
 
 /** The store for a repository's git data. */
+/** The commits shown when comparing the current branch to another one. */
+function getCompareRevisionRange(
+  base: Branch,
+  branch: Branch,
+  comparisonMode: ComparisonMode
+) {
+  return comparisonMode === ComparisonMode.Ahead
+    ? revRange(branch.name, base.name)
+    : revRange(base.name, branch.name)
+}
+
 export class GitStore extends BaseStore {
   /** The commits keyed by their SHA. */
   public readonly commitLookup = new Map<string, Commit>()
@@ -1883,17 +1894,18 @@ export class GitStore extends BaseStore {
       return null
     }
 
-    const revisionRange =
-      comparisonMode === ComparisonMode.Ahead
-        ? revRange(branch.name, base.name)
-        : revRange(base.name, branch.name)
-    const commitsToLoad =
+    // Only load the first batch, comparisons against distant branches can
+    // span tens of thousands of commits. More are loaded while scrolling, see
+    // `loadCompareCommitBatch`.
+    const commitsToLoad = Math.min(
       comparisonMode === ComparisonMode.Ahead
         ? aheadBehind.ahead
-        : aheadBehind.behind
+        : aheadBehind.behind,
+      CommitBatchSize
+    )
     const commits = await getCommits(
       this.repository,
-      revisionRange,
+      getCompareRevisionRange(base, branch, comparisonMode),
       commitsToLoad
     )
 
@@ -1906,6 +1918,43 @@ export class GitStore extends BaseStore {
       ahead: aheadBehind.ahead,
       behind: aheadBehind.behind,
     }
+  }
+
+  /**
+   * Load the next batch of commits of a comparison between the current branch
+   * and the given branch, skipping the commits that have already been loaded.
+   */
+  public async loadCompareCommitBatch(
+    branch: Branch,
+    comparisonMode: ComparisonMode,
+    skip: number
+  ): Promise<ReadonlyArray<string> | null> {
+    return withRepositoryGitOperation(
+      this.repository.path,
+      'read',
+      async () => {
+        const tip = this.tip
+        if (tip.kind !== TipState.Valid) {
+          return null
+        }
+
+        const commits = await this.performFailableOperation(() =>
+          getCommits(
+            this.repository,
+            getCompareRevisionRange(tip.branch, branch, comparisonMode),
+            CommitBatchSize,
+            skip
+          )
+        )
+
+        if (!commits) {
+          return null
+        }
+
+        this.storeCommits(commits)
+        return commits.map(c => c.sha)
+      }
+    )
   }
 
   public async pruneForkedRemotes(openPRs: ReadonlyArray<PullRequest>) {
