@@ -7,7 +7,10 @@ import { BundleAnalyzerPlugin } from 'webpack-bundle-analyzer'
 
 const config: webpack.Configuration = {
   mode: 'production',
-  devtool: 'source-map',
+  // No source maps in production. Logging an error would otherwise make the
+  // renderer read and parse the multi-megabyte renderer.js.map synchronously
+  // and keep it in memory for the rest of the session.
+  devtool: false,
 }
 
 const mainConfig = merge({}, common.main, config)
