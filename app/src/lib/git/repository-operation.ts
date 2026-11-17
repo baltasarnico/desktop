@@ -1,5 +1,5 @@
-import { realpath } from 'fs/promises'
-import { basename, dirname, resolve, sep } from 'path'
+import { realpath, stat } from 'fs/promises'
+import { basename, dirname, join, resolve, sep } from 'path'
 import { git } from './core'
 import { isErrnoException } from '../errno-exception'
 import { AssistedCommitError } from './assisted-commit/error'
@@ -407,6 +407,88 @@ export async function getAssistedCommitProtectedPaths(
   path: string
 ): Promise<ReadonlyArray<string>> {
   return (await getAssistedCommitProtectedResources(path)).paths
+}
+
+/**
+ * Cached results of `getAssistedCommitProtectedPaths` for routine status
+ * loads, keyed by repository path. See `getCachedAssistedCommitProtectedPaths`.
+ */
+const protectedPathsCache = new Map<
+  string,
+  {
+    readonly fingerprint: string
+    readonly paths: ReadonlyArray<string>
+    readonly objectDirectories: ReadonlyArray<string>
+  }
+>()
+
+async function statFingerprint(path: string): Promise<string> {
+  try {
+    const s = await stat(path)
+    return `${s.ino}:${s.mtimeMs}:${s.size}`
+  } catch {
+    return 'missing'
+  }
+}
+
+/**
+ * Describe everything that can change the outcome of
+ * `getAssistedCommitProtectedResources` for a path: where the path resolves
+ * to, its `.git` entry (directory or gitlink file), the alternates files of
+ * every object directory and the Git environment overrides.
+ */
+async function getProtectedPathsFingerprint(
+  path: string,
+  objectDirectories: ReadonlyArray<string>
+): Promise<string> {
+  const parts = await Promise.all([
+    realpath(path).catch(() => 'missing'),
+    statFingerprint(join(path, '.git')),
+    ...objectDirectories.map(dir =>
+      statFingerprint(join(dir, 'info', 'alternates'))
+    ),
+  ])
+  parts.push(
+    process.env.GIT_DIR ?? '',
+    process.env.GIT_COMMON_DIR ?? '',
+    process.env.GIT_OBJECT_DIRECTORY ?? '',
+    process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES ?? ''
+  )
+  return parts.join('\0')
+}
+
+/**
+ * Like `getAssistedCommitProtectedPaths`, but reuses the previous result for a
+ * path while nothing it depends on has changed on disk, which saves four Git
+ * processes on every status load.
+ *
+ * Only use this for routine refreshes. Anything that establishes protection
+ * or leases (assisted commit runs, clones, removals) must call
+ * `getAssistedCommitProtectedPaths` directly.
+ */
+export async function getCachedAssistedCommitProtectedPaths(
+  path: string
+): Promise<ReadonlyArray<string>> {
+  const key = pathKey(path)
+  const cached = protectedPathsCache.get(key)
+
+  if (
+    cached !== undefined &&
+    repositoryResourcePaths.get(key) === cached.paths &&
+    (await getProtectedPathsFingerprint(path, cached.objectDirectories)) ===
+      cached.fingerprint
+  ) {
+    return cached.paths
+  }
+
+  const { paths, objectDirectories } =
+    await getAssistedCommitProtectedResources(path)
+  const fingerprint = await getProtectedPathsFingerprint(
+    path,
+    objectDirectories
+  )
+  protectedPathsCache.set(key, { fingerprint, paths, objectDirectories })
+  return paths
 }
 
 /** Discover admitted paths and the complete native alternate-object routing graph together. */

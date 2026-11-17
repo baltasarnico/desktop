@@ -8,7 +8,7 @@ import { ErrorWithMetadata } from '../error-with-metadata'
 import { IStatusResult } from '../git'
 import { AssistedCommitError } from '../git/assisted-commit'
 import {
-  getAssistedCommitProtectedPaths,
+  getCachedAssistedCommitProtectedPaths,
   isRepositoryGitPaused,
   protectAssistedCommitResources,
   withRepositoryGitErrorPropagation,
@@ -377,7 +377,7 @@ export class AssistedCommitReaders {
     if (status === null) {
       return null
     }
-    await getAssistedCommitProtectedPaths(repository.path)
+    await getCachedAssistedCommitProtectedPaths(repository.path)
     try {
       await this.selections.verifyRestored(repository)
     } catch (error) {
