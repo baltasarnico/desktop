@@ -1,6 +1,12 @@
-import { DiffSelectionType, DiffType } from '../../models/diff'
+import { stat } from 'fs/promises'
+import { join } from 'path'
+import { DiffSelectionType, DiffType, IDiff } from '../../models/diff'
 import { Repository } from '../../models/repository'
-import { WorkingDirectoryStatus } from '../../models/status'
+import {
+  AppFileStatusKind,
+  WorkingDirectoryFileChange,
+  WorkingDirectoryStatus,
+} from '../../models/status'
 import { ChangesSelectionKind } from '../app-state'
 import { getAssistedCommitInputVersions } from '../assisted-commit-request'
 import { arrayEquals } from '../equality'
@@ -22,6 +28,92 @@ export type SelectionDisplayResult =
       readonly error: AssistedCommitError
       readonly run: IAssistedCommitRun | undefined
     }
+
+/**
+ * The display diff last loaded per repository path, along with a fingerprint
+ * of everything that can change it. See `getDisplayDiffFingerprint`.
+ */
+const displayDiffs = new Map<
+  string,
+  { readonly fingerprint: string; readonly diff: IDiff }
+>()
+
+async function statFingerprint(path: string): Promise<string> {
+  try {
+    const s = await stat(path, { bigint: true })
+    return `${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`
+  } catch {
+    return 'missing'
+  }
+}
+
+/**
+ * Describe the inputs of the working directory diff for a file: the file
+ * itself, the index, HEAD (and its reflog, which changes on every commit,
+ * checkout or reset) and configuration that affects how diffs are produced.
+ *
+ * Returns null when the diff can't be fingerprinted this way (submodules).
+ */
+async function getDisplayDiffFingerprint(
+  repository: Repository,
+  file: WorkingDirectoryFileChange,
+  hideWhitespace: boolean
+): Promise<string | null> {
+  if (file.status.submoduleStatus !== undefined) {
+    return null
+  }
+
+  const gitDir = repository.resolvedGitDir
+  const paths = [
+    join(repository.path, file.path),
+    ...(file.status.kind === AppFileStatusKind.Renamed ||
+    file.status.kind === AppFileStatusKind.Copied
+      ? [join(repository.path, file.status.oldPath)]
+      : []),
+    join(gitDir, 'index'),
+    join(gitDir, 'HEAD'),
+    join(gitDir, 'logs', 'HEAD'),
+    join(gitDir, 'config'),
+    join(gitDir, 'info', 'attributes'),
+    join(repository.path, '.gitattributes'),
+  ]
+  const stats = await Promise.all(paths.map(statFingerprint))
+
+  return JSON.stringify([file.id, file.status, hideWhitespace, ...stats])
+}
+
+/**
+ * Load the working directory diff for the selected file, reusing the
+ * previous result when nothing it depends on has changed. Status refreshes
+ * (e.g. every time the window gains focus) would otherwise spawn Git and parse
+ * the full diff again for an unchanged file.
+ */
+export async function loadDisplayDiff(
+  repository: Repository,
+  file: WorkingDirectoryFileChange,
+  hideWhitespace: boolean
+): Promise<IDiff> {
+  const fingerprint = await getDisplayDiffFingerprint(
+    repository,
+    file,
+    hideWhitespace
+  )
+  const previous = displayDiffs.get(repository.path)
+
+  if (fingerprint !== null && previous?.fingerprint === fingerprint) {
+    return previous.diff
+  }
+
+  const diff = await getWorkingDirectoryDiff(repository, file, hideWhitespace)
+
+  if (fingerprint === null) {
+    displayDiffs.delete(repository.path)
+  } else {
+    displayDiffs.set(repository.path, { fingerprint, diff })
+  }
+
+  return diff
+}
 
 /** Refresh display bounds without manufacturing or broadening selected-change authority. */
 export async function updateWorkingDirectorySelectionDiff(
@@ -68,7 +160,7 @@ export async function updateWorkingDirectorySelectionDiff(
     return { kind: 'unchanged' }
   }
 
-  const diff = await getWorkingDirectoryDiff(
+  const diff = await loadDisplayDiff(
     repository,
     selectedFileBeforeLoad,
     hideWhitespace
