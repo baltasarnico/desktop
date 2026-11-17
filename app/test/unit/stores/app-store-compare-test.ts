@@ -255,4 +255,20 @@ describe('AppStore branch comparison and repository memory', () => {
       false
     )
   })
+
+  it('only re-renders for Git store updates of the selected repository', async t => {
+    const { repository } = await setupComparison(t)
+    const gitStore = appStore['gitStoreCache'].get(repository)
+    const emitUpdate = t.mock.method(appStore, 'emitUpdate' as never, () => {})
+    const previous = appStore['selectedRepository']
+    t.after(() => (appStore['selectedRepository'] = previous))
+
+    appStore['selectedRepository'] = null
+    appStore['onGitStoreUpdated'](repository, gitStore)
+    assert.equal(emitUpdate.mock.callCount(), 0)
+
+    appStore['selectedRepository'] = repository
+    appStore['onGitStoreUpdated'](repository, gitStore)
+    assert.equal(emitUpdate.mock.callCount(), 1)
+  })
 })

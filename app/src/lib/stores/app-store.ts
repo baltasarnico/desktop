@@ -1677,9 +1677,22 @@ export class AppStore extends TypedBaseStore<IAppState> {
       this._selectWorkingDirectoryFiles(repository)
     } else if (selectStashEntry) {
       this._selectStashedFile(repository)
-    } else {
+    } else if (this.isSelectedRepositoryState(repository)) {
+      // Only the selected repository's state is part of the app state, so
+      // updates to other repositories (e.g. from refreshing repository list
+      // indicators) don't need to re-render the app. Their state is picked up
+      // when they're selected.
       this.emitUpdate()
     }
+  }
+
+  /** Whether the repository shares its state with the selected repository. */
+  private isSelectedRepositoryState(repository: Repository) {
+    const selected = this.selectedRepository
+    return (
+      selected instanceof Repository &&
+      getRepositoryStateKey(selected) === getRepositoryStateKey(repository)
+    )
   }
 
   private clearBranchProtectionState(repository: Repository) {
