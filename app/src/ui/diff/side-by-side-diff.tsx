@@ -245,6 +245,9 @@ export class SideBySideDiff extends React.Component<
 
   private readonly hunkExpansionRefs = new Map<string, HTMLButtonElement>()
 
+  /** The list width the cached row heights were measured at. */
+  private lastMeasuredListWidth: number | null = null
+
   /**
    * This is just a signal that will toggle whenever the aria live message
    * changes, indicating it should be reannounced by screen readers.
@@ -628,7 +631,7 @@ export class SideBySideDiff extends React.Component<
             message={ariaLiveMessage}
             trackedUserInput={this.ariaLiveChangeSignal}
           />
-          <AutoSizer onResize={this.clearListRowsHeightCache}>
+          <AutoSizer onResize={this.onListResized}>
             {({ height, width }) => (
               <List
                 deferredMeasurementCache={listRowsHeightCache}
@@ -979,6 +982,15 @@ export class SideBySideDiff extends React.Component<
 
   private clearListRowsHeightCache = () => {
     listRowsHeightCache.clearAll()
+  }
+
+  private onListResized = ({ width }: { width: number }) => {
+    // Row heights only depend on the width (text wrapping), so changing just
+    // the height doesn't require measuring every row again.
+    if (width !== this.lastMeasuredListWidth) {
+      this.lastMeasuredListWidth = width
+      this.clearListRowsHeightCache()
+    }
   }
 
   private async initDiffSyntaxMode() {
