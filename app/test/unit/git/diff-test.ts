@@ -128,6 +128,61 @@ describe('git/diff', () => {
     }
   })
 
+  describe('historical diffs ignore diff.external', () => {
+    for (const operation of ['merge-base', 'range'] as const) {
+      it(
+        `does not run an external diff tool in a ${operation} diff`,
+        { skip: process.platform === 'win32' },
+        async t => {
+          const repository = await setupEmptyRepository(t)
+          const runGit = async (args: string[]) => {
+            const result = await exec(args, repository.path)
+            assert.strictEqual(result.exitCode, 0, result.stderr)
+            return result.stdout.trim()
+          }
+          const tool = path.join(repository.path, '.git', 'external-diff.sh')
+          await writeFile(tool, '#!/bin/sh\necho external diff output\n', {
+            mode: 0o755,
+          })
+          await runGit(['config', 'diff.external', tool])
+
+          const filePath = path.join(repository.path, 'file.txt')
+          await writeFile(filePath, 'base content\n')
+          await runGit(['add', '--all'])
+          await runGit(['commit', '-m', 'Initial'])
+          const base = await runGit(['rev-parse', 'HEAD'])
+          await writeFile(filePath, 'first change\n')
+          await runGit(['commit', '-am', 'First'])
+          const first = await runGit(['rev-parse', 'HEAD'])
+          await writeFile(filePath, 'latest change\n')
+          await runGit(['commit', '-am', 'Latest'])
+          const latest = await runGit(['rev-parse', 'HEAD'])
+          const file = new FileChange('file.txt', {
+            kind: AppFileStatusKind.Modified,
+          })
+
+          const diff =
+            operation === 'merge-base'
+              ? await getBranchMergeBaseDiff(
+                  repository,
+                  file,
+                  base,
+                  latest,
+                  false,
+                  latest
+                )
+              : await getCommitRangeDiff(repository, file, [first, latest])
+
+          assert.ok(diff.kind === DiffType.Text)
+          assert.strictEqual(
+            diff.text,
+            '@@ -1 +1 @@\n-base content\n+latest change'
+          )
+        }
+      )
+    }
+  })
+
   describe('getWorkingDirectoryImage', () => {
     it('retrieves valid image for new file', async t => {
       const testRepoPath = await setupFixtureRepository(

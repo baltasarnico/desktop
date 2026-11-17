@@ -161,6 +161,7 @@ export async function getBranchMergeBaseDiff(
 ): Promise<IDiff> {
   const args = [
     'diff',
+    '--no-ext-diff',
     '--merge-base',
     ...(hideWhitespaceInDiff ? ['-w'] : []),
     '--patch-with-raw',
@@ -207,6 +208,7 @@ export async function getCommitRangeDiff(
   const latestCommit = commits.at(-1) ?? '' // can't be undefined since commits.length > 0
   const args = [
     'diff',
+    '--no-ext-diff',
     oldestCommitRef,
     latestCommit,
     ...(hideWhitespaceInDiff ? ['-w'] : []),
