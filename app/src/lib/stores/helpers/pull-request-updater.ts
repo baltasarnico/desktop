@@ -59,7 +59,10 @@ export class PullRequestUpdater {
 
     this.timeoutId = null
     if (this.getTimeSinceLastRefresh() < MaxPullRequestRefreshFrequency) {
+      // Something else refreshed recently, wait for the next interval
+      // instead of refreshing now and scheduling a second timer chain.
       this.scheduleTick()
+      return
     }
 
     this.coordinator
