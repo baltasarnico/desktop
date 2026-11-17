@@ -203,6 +203,23 @@ export class CommitList extends React.Component<
   ICommitListState
 > {
   private commitsHash = memoize(makeCommitsHash, arrayEquals)
+  /**
+   * Memoized so that every visible `CommitListItem` (a PureComponent) gets
+   * the same array between renders instead of a new one each time.
+   */
+  private getSelectedCommits = memoizeOne(
+    (
+      selectedSHAs: ReadonlyArray<string>,
+      _commitLookup: Map<string, Commit>,
+      _commitLookupSize: number
+    ) => this.lookupCommits(selectedSHAs)
+  )
+
+  private getTagsToPushSet = memoizeOne(
+    (tagsToPush: ReadonlyArray<string> | null | undefined) =>
+      new Set(tagsToPush ?? [])
+  )
+
   private commitIndexBySha = memoizeOne(
     (commitSHAs: ReadonlyArray<string>) =>
       new Map(commitSHAs.map((sha, index) => [sha, index]))
@@ -371,11 +388,18 @@ export class CommitList extends React.Component<
   }
 
   private get selectedCommits() {
-    return this.lookupCommits(this.props.selectedSHAs)
+    const { selectedSHAs, commitLookup } = this.props
+    // The lookup is mutated in place as commits load, hence its size is part
+    // of the memoization key.
+    return this.getSelectedCommits(
+      selectedSHAs,
+      commitLookup,
+      commitLookup.size
+    )
   }
 
   private getUnpushedTags(commit: Commit) {
-    const tagsToPushSet = new Set(this.props.tagsToPush ?? [])
+    const tagsToPushSet = this.getTagsToPushSet(this.props.tagsToPush)
     return commit.tags.filter(tagName => tagsToPushSet.has(tagName))
   }
 
