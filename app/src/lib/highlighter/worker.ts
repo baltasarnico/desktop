@@ -1,9 +1,67 @@
+import { createHash } from 'crypto'
 import { ITokens, IHighlightRequest } from './types'
 import { encodePathAsUrl } from '../../lib/path'
 
 const highlightWorkers = new Array<Worker>()
 const maxIdlingWorkers = 2
 const workerMaxRunDuration = 5 * 1000
+
+/** Idle workers are terminated after this long to free their memory. */
+const workerMaxIdleDuration = 60 * 1000
+const idleWorkerTimeouts = new Map<Worker, number>()
+
+/**
+ * Recent highlighting results. Re-selecting a file, or a refresh that
+ * produces an identical diff, would otherwise tokenize the same contents
+ * again.
+ */
+const maxCachedResults = 20
+const cachedResults = new Map<string, ITokens>()
+
+function getCacheKey(
+  contentLines: ReadonlyArray<string>,
+  basename: string,
+  extension: string,
+  tabSize: number,
+  lines: ReadonlyArray<number>
+) {
+  const hash = createHash('sha1')
+  hash.update(JSON.stringify([basename, extension, tabSize, lines]))
+  for (const line of contentLines) {
+    hash.update(line)
+    hash.update('\n')
+  }
+  return hash.digest('hex')
+}
+
+function takeIdleWorker(): Worker | undefined {
+  const worker = highlightWorkers.shift()
+  if (worker !== undefined) {
+    window.clearTimeout(idleWorkerTimeouts.get(worker))
+    idleWorkerTimeouts.delete(worker)
+  }
+  return worker
+}
+
+function releaseWorker(worker: Worker) {
+  if (highlightWorkers.length >= maxIdlingWorkers) {
+    worker.terminate()
+    return
+  }
+
+  highlightWorkers.push(worker)
+  idleWorkerTimeouts.set(
+    worker,
+    window.setTimeout(() => {
+      idleWorkerTimeouts.delete(worker)
+      const index = highlightWorkers.indexOf(worker)
+      if (index !== -1) {
+        highlightWorkers.splice(index, 1)
+        worker.terminate()
+      }
+    }, workerMaxIdleDuration)
+  )
+}
 const workerUri = encodePathAsUrl(__dirname, 'highlighter.js')
 
 /**
@@ -40,8 +98,23 @@ export function highlight(
     return Promise.resolve({})
   }
 
+  const cacheKey = getCacheKey(
+    contentLines,
+    basename,
+    extension,
+    tabSize,
+    lines
+  )
+  const cached = cachedResults.get(cacheKey)
+  if (cached !== undefined) {
+    // Move to the end to keep the most recently used results
+    cachedResults.delete(cacheKey)
+    cachedResults.set(cacheKey, cached)
+    return Promise.resolve(cached)
+  }
+
   // Get an idle worker or create a new one if none exist.
-  const worker = highlightWorkers.shift() || new Worker(workerUri)
+  const worker = takeIdleWorker() ?? new Worker(workerUri)
 
   return new Promise<ITokens>((resolve, reject) => {
     let timeout: null | number = null
@@ -61,12 +134,16 @@ export function highlight(
 
     worker.onmessage = ev => {
       clearTimeout()
-      if (highlightWorkers.length < maxIdlingWorkers) {
-        highlightWorkers.push(worker)
-      } else {
-        worker.terminate()
+      releaseWorker(worker)
+      const tokens = ev.data as ITokens
+      cachedResults.set(cacheKey, tokens)
+      if (cachedResults.size > maxCachedResults) {
+        const oldest = cachedResults.keys().next().value
+        if (oldest !== undefined) {
+          cachedResults.delete(oldest)
+        }
       }
-      resolve(ev.data as ITokens)
+      resolve(tokens)
     }
 
     const request: IHighlightRequest = {
