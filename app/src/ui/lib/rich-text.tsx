@@ -122,16 +122,19 @@ export class RichText extends React.Component<IRichTextProps, IRichTextState> {
       return
     }
 
+    // No need to measure synchronously here (which would force a layout while
+    // React is committing): the observer reports the initial size once the
+    // element has been laid out, which triggers `onResized`. Forget the last
+    // width so that notification isn't skipped for a newly attached element.
+    this.lastKnownWidth = null
     this.resizeObserver.observe(elem)
-    this.onResized(elem)
   }
 
   private onResized = (elem?: HTMLDivElement) => {
     elem = elem ?? this.containerRef.current ?? undefined
-    if (elem && elem.scrollWidth > elem.clientWidth) {
-      this.setState({ overflowed: true })
-    } else {
-      this.setState({ overflowed: false })
+    const overflowed = elem !== undefined && elem.scrollWidth > elem.clientWidth
+    if (overflowed !== this.state.overflowed) {
+      this.setState({ overflowed })
     }
   }
 
