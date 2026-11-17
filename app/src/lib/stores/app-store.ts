@@ -576,6 +576,12 @@ const repositoryIndicatorsEnabledKey = 'enable-repository-indicators'
 // background fetching should occur hourly when Desktop is active, but this
 // lower interval ensures user interactions like switching repositories and
 // switching between apps does not result in excessive fetching in the app
+/**
+ * Once a repository's commit lookup has grown past this many commits, leaving
+ * the repository prunes it down to the commits still on display.
+ */
+const MaxRetainedCommits = 5000
+
 const BackgroundFetchMinimumInterval = 30 * 60 * 1000
 
 /**
@@ -2415,6 +2421,13 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.stopPullRequestUpdater()
     this._clearBanner()
     this.stopBackgroundPruner()
+
+    if (
+      previouslySelectedRepository instanceof Repository &&
+      previouslySelectedRepository.id !== repository?.id
+    ) {
+      this.pruneCommitLookup(previouslySelectedRepository)
+    }
 
     if (repository == null) {
       return Promise.resolve(null)
@@ -10005,6 +10018,31 @@ export class AppStore extends TypedBaseStore<IAppState> {
     })
   }
 
+  /** Drop commits a repository we're leaving no longer shows. */
+  private pruneCommitLookup(repository: Repository) {
+    if (!this.gitStoreCache.has(repository)) {
+      return
+    }
+
+    const gitStore = this.gitStoreCache.get(repository)
+    if (gitStore.commitLookup.size <= MaxRetainedCommits) {
+      return
+    }
+
+    const { compareState, commitSelection } =
+      this.repositoryStateCache.get(repository)
+    const { tip } = gitStore
+    const keep = new Set([
+      ...compareState.commitSHAs,
+      ...commitSelection.shas,
+      ...commitSelection.shasInDiff,
+      ...gitStore.localCommitSHAs,
+      ...(tip.kind === TipState.Valid ? [tip.branch.tip.sha] : []),
+      ...(tip.kind === TipState.Detached ? [tip.currentSha] : []),
+    ])
+    gitStore.pruneCommitLookup(keep)
+  }
+
   public async _removeRepository(
     repository: Repository | CloningRepository,
     moveToTrash: boolean
@@ -10062,6 +10100,10 @@ export class AppStore extends TypedBaseStore<IAppState> {
         this._removeCloningRepository(repository)
       } else {
         await this.repositoriesStore.removeRepository(repository)
+        // Release the Git store (and every commit it looked up) and the state
+        // of the repository, they're otherwise kept until the app quits.
+        this.gitStoreCache.remove(repository)
+        this.repositoryStateCache.remove(repository)
       }
     } catch (err) {
       this.emitError(err)

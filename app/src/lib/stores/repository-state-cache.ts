@@ -37,6 +37,11 @@ export class RepositoryStateCache {
 
   public constructor(private readonly statsStore: IStatsStore) {}
 
+  /** Forget the state of a repository that's no longer in the app. */
+  public remove(repository: Repository) {
+    this.repositoryState.delete(getRepositoryStateKey(repository))
+  }
+
   /** Whether any state has been created for the repository. */
   public has(repository: Repository): boolean {
     return this.repositoryState.has(getRepositoryStateKey(repository))

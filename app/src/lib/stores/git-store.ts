@@ -755,6 +755,19 @@ export class GitStore extends BaseStore {
     return this._localCommitSHAs
   }
 
+  /**
+   * Drop every looked up commit except the given ones. The lookup otherwise
+   * keeps every commit ever loaded (history scrolling, comparisons, ...) for
+   * the lifetime of the app.
+   */
+  public pruneCommitLookup(keep: ReadonlySet<string>) {
+    for (const sha of this.commitLookup.keys()) {
+      if (!keep.has(sha)) {
+        this.commitLookup.delete(sha)
+      }
+    }
+  }
+
   /** Store the given commits. */
   private storeCommits(commits: ReadonlyArray<Commit>) {
     for (const commit of commits) {

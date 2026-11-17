@@ -31,7 +31,7 @@ async function gitCommands(
     })
 }
 
-describe('AppStore branch comparison', () => {
+describe('AppStore branch comparison and repository memory', () => {
   let appStore: AppStore
   let statsDb: TestStatsDatabase
   let stores: ITestStores
@@ -195,5 +195,41 @@ describe('AppStore branch comparison', () => {
     assert.ok(compareState.mergeStatus !== null)
     assert.notEqual(compareState.mergeStatus.kind, 'Loading')
   })
-})
 
+  it('releases the Git store and state of a removed repository', async t => {
+    const { repository } = await setupComparison(t)
+    assert.ok(appStore['gitStoreCache'].has(repository))
+    assert.ok(stores.repositoryStateCache.has(repository))
+
+    await appStore._removeRepository(repository, false)
+
+    assert.equal(appStore['gitStoreCache'].has(repository), false)
+    assert.equal(stores.repositoryStateCache.has(repository), false)
+  })
+
+  it('prunes a large commit lookup down to the commits on display', async t => {
+    const { repository } = await setupComparison(t)
+    const gitStore = appStore['gitStoreCache'].get(repository)
+    const { compareState } = stores.repositoryStateCache.get(repository)
+    const [displayed] = compareState.commitSHAs
+    const displayedCommit = gitStore.commitLookup.get(displayed)
+    assert.ok(displayedCommit)
+
+    for (let i = 0; i < 6000; i++) {
+      gitStore.commitLookup.set(`fake-${i}`, displayedCommit)
+    }
+
+    appStore['pruneCommitLookup'](repository)
+
+    assert.ok(gitStore.commitLookup.size < 100)
+    assert.strictEqual(gitStore.commitLookup.get(displayed), displayedCommit)
+  })
+
+  it('keeps small commit lookups as they are', async t => {
+    const { repository } = await setupComparison(t)
+    const gitStore = appStore['gitStoreCache'].get(repository)
+    const before = gitStore.commitLookup.size
+    appStore['pruneCommitLookup'](repository)
+    assert.equal(gitStore.commitLookup.size, before)
+  })
+})
