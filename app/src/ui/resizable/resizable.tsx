@@ -34,9 +34,25 @@ export class Resizable extends React.Component<
   private startWidth: number | null = null
   private startX: number | null = null
 
+  /**
+   * Mouse moves are coalesced to at most one resize per animation frame, as
+   * every resize re-renders the app. This is the latest unapplied move.
+   */
+  private pendingMove: { width: number; direction: ResizeDirection } | null =
+    null
+  private pendingMoveFrame: number | null = null
+
   public constructor(props: IResizableProps) {
     super(props)
     this.state = { resizeMessage: '' }
+  }
+
+  public componentWillUnmount() {
+    this.unsubscribeFromGlobalEvents()
+    if (this.pendingMoveFrame !== null) {
+      cancelAnimationFrame(this.pendingMoveFrame)
+      this.pendingMoveFrame = null
+    }
   }
 
   /**
@@ -83,11 +99,32 @@ export class Resizable extends React.Component<
     const deltaX = e.clientX - this.startX
     const newWidth = this.startWidth + deltaX
 
-    this.updateResizeMessage(
-      deltaX > 0 ? ResizeDirection.Increase : ResizeDirection.Decrease
-    )
-    this.props.onResize(this.clampWidth(newWidth))
+    this.pendingMove = {
+      width: this.clampWidth(newWidth),
+      direction:
+        deltaX > 0 ? ResizeDirection.Increase : ResizeDirection.Decrease,
+    }
+    if (this.pendingMoveFrame === null) {
+      this.pendingMoveFrame = requestAnimationFrame(this.applyPendingMove)
+    }
     e.preventDefault()
+  }
+
+  private applyPendingMove = () => {
+    this.pendingMoveFrame = null
+    const move = this.pendingMove
+    this.pendingMove = null
+    if (move !== null) {
+      this.updateResizeMessage(move.direction)
+      this.props.onResize(move.width)
+    }
+  }
+
+  private flushPendingMove() {
+    if (this.pendingMoveFrame !== null) {
+      cancelAnimationFrame(this.pendingMoveFrame)
+    }
+    this.applyPendingMove()
   }
 
   private unsubscribeFromGlobalEvents() {
@@ -101,6 +138,7 @@ export class Resizable extends React.Component<
    */
   private handleDragStop = (e: MouseEvent) => {
     this.unsubscribeFromGlobalEvents()
+    this.flushPendingMove()
     e.preventDefault()
   }
 
