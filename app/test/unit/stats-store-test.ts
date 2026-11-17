@@ -57,6 +57,20 @@ describe('StatsStore', () => {
     })
   })
 
+  it('does not record measures when opted out', async () => {
+    statsDb = await createStatsDb()
+    localStorage.setItem('stats-opt-out', '1')
+    try {
+      const store = new StatsStore(statsDb, new TestActivityMonitor(), fakePost)
+      await store.increment('unhandledRejectionCount')
+
+      const count = await statsDb.dailyMeasures.count()
+      assert.equal(count, 0)
+    } finally {
+      localStorage.removeItem('stats-opt-out')
+    }
+  })
+
   it('resubscribes to the activity monitor after submitting', async () => {
     statsDb = await createStatsDb()
     const activityMonitor = new TestActivityMonitor()

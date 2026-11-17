@@ -713,7 +713,7 @@ export class StatsStore implements IStatsStore {
 
     // If the user has set an opt out value but we haven't sent the ping yet,
     // give it a shot now.
-    if (!getBoolean(HasSentOptInPingKey, false)) {
+    if (!__DISABLE_USAGE_STATS__ && !getBoolean(HasSentOptInPingKey, false)) {
       this.sendOptInStatusPing(this.optOut, storedValue)
     }
 
@@ -1060,6 +1060,12 @@ export class StatsStore implements IStatsStore {
   private async updateDailyMeasures<K extends keyof IDailyMeasures>(
     fn: (measures: IDailyMeasures) => Pick<IDailyMeasures, K>
   ): Promise<void> {
+    // Measures are only ever used for reporting, don't spend a database
+    // transaction on every tracked event when they'll never be sent.
+    if (this.optOut) {
+      return
+    }
+
     const defaultMeasures = DefaultDailyMeasures
     await this.db.transaction('rw', this.db.dailyMeasures, async () => {
       const measures = await this.db.dailyMeasures.limit(1).first()
@@ -1585,5 +1591,5 @@ function timeTo(key: string): number | undefined {
  * or not.
  */
 export function getHasOptedOutOfStats() {
-  return getBoolean(StatsOptOutKey)
+  return __DISABLE_USAGE_STATS__ || getBoolean(StatsOptOutKey)
 }

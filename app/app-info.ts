@@ -28,6 +28,12 @@ export function getReplacements() {
     __DEV__: isDevBuild,
     __DEV_SECRETS__: isDevBuild || !process.env.DESKTOP_OAUTH_CLIENT_SECRET,
     __RELEASE_CHANNEL__: s(channel),
+    // Linux builds are never official GitHub builds, so don't send usage
+    // statistics from them unless explicitly asked to.
+    __DISABLE_USAGE_STATS__:
+      process.env.DESKTOP_DISABLE_USAGE_STATS !== undefined
+        ? process.env.DESKTOP_DISABLE_USAGE_STATS === '1'
+        : process.platform === 'linux',
     __UPDATES_URL__: s(process.env.DESKTOP_E2E_UPDATES_URL ?? getUpdatesURL()),
     __ERROR_REPORTING_ENDPOINT__: optionalStringReplacement(
       process.env.DESKTOP_ERROR_REPORTING_ENDPOINT

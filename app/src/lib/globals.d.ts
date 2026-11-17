@@ -21,6 +21,13 @@ declare const __WIN32__: boolean
 declare const __LINUX__: boolean
 
 /**
+ * When true, usage statistics are never recorded or sent, regardless of the
+ * user's preference. Controlled by `DESKTOP_DISABLE_USAGE_STATS` at build time
+ * and on by default for Linux builds.
+ */
+declare const __DISABLE_USAGE_STATS__: boolean
+
+/**
  * The product name of the app, this is intended to be a compile-time
  * replacement for app.getName
  * (https://www.electronjs.org/docs/latest/api/app#appgetname)
