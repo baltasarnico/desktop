@@ -2,6 +2,7 @@ import { git } from './core'
 import { Repository } from '../../models/repository'
 import { IRemote } from '../../models/remote'
 import { envForRemoteOperation } from './environment'
+import { cachedByTags } from './fingerprint-cache'
 
 /**
  * Create a new tag on the given target commit.
@@ -41,6 +42,17 @@ export async function deleteTag(
  * @param repository    The repository in which to get all the tags from.
  */
 export async function getAllTags(
+  repository: Repository
+): Promise<Map<string, string>> {
+  // Tags only change when refs/tags or packed-refs change, no need to list
+  // them again on every refresh. Copy as callers own the returned map.
+  const tags = await cachedByTags(repository, 'getAllTags', () =>
+    getAllTagsUncached(repository)
+  )
+  return new Map(tags)
+}
+
+async function getAllTagsUncached(
   repository: Repository
 ): Promise<Map<string, string>> {
   const args = ['show-ref', '--tags', '-d']

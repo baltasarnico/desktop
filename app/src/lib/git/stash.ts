@@ -15,6 +15,7 @@ import { stageFiles } from './update-index'
 import { Branch } from '../../models/branch'
 import { createLogParser } from './git-delimiter-parser'
 import { coerceToString } from './coerce-to-string'
+import { cachedByStash } from './fingerprint-cache'
 
 export const DesktopStashEntryMarker = '!!GitHub_Desktop'
 
@@ -43,6 +44,15 @@ type StashResult = {
  * as well as the total amount of stash entries.
  */
 export async function getStashes(repository: Repository): Promise<StashResult> {
+  // The stash list only changes when the stash ref or its reflog change.
+  return cachedByStash(repository, 'getStashes', () =>
+    getStashesUncached(repository)
+  )
+}
+
+async function getStashesUncached(
+  repository: Repository
+): Promise<StashResult> {
   const { formatArgs, parse } = createLogParser({
     name: '%gD',
     stashSha: '%H',

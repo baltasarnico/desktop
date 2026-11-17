@@ -1,10 +1,22 @@
 import { git } from './core'
 import { Repository } from '../../models/repository'
+import { cachedByHeadReflog } from './fingerprint-cache'
 
 /**
  * Get the `limit` most recently checked out branches.
  */
 export async function getRecentBranches(
+  repository: Repository,
+  limit: number
+): Promise<ReadonlyArray<string>> {
+  // Walking up to 2500 reflog entries on every refresh is wasteful when the
+  // reflog hasn't changed, which is the case unless HEAD moved.
+  return cachedByHeadReflog(repository, `getRecentBranches:${limit}`, () =>
+    getRecentBranchesUncached(repository, limit)
+  )
+}
+
+async function getRecentBranchesUncached(
   repository: Repository,
   limit: number
 ): Promise<ReadonlyArray<string>> {
