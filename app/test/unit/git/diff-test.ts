@@ -183,6 +183,26 @@ describe('git/diff', () => {
     }
   })
 
+  describe('very large diffs', () => {
+    it('reports an untracked file over the size limit as unrenderable', async t => {
+      const repository = await setupEmptyRepository(t)
+      // ~80MB of text, which is above the 70MB rendering limit
+      const line = 'x'.repeat(99) + '\n'
+      await writeFile(
+        path.join(repository.path, 'huge.txt'),
+        line.repeat(800_000)
+      )
+      const file = new WorkingDirectoryFileChange(
+        'huge.txt',
+        { kind: AppFileStatusKind.Untracked },
+        DiffSelection.fromInitialSelection(DiffSelectionType.All)
+      )
+
+      const diff = await getWorkingDirectoryDiff(repository, file)
+      assert.equal(diff.kind, DiffType.Unrenderable)
+    })
+  })
+
   describe('getWorkingDirectoryImage', () => {
     it('retrieves valid image for new file', async t => {
       const testRepoPath = await setupFixtureRepository(

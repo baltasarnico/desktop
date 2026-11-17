@@ -26,7 +26,12 @@ import { getOldPathOrDefault } from '../get-old-path'
 import { readFile, writeFile, unlink } from 'fs/promises'
 import { getTempFilePath } from '../file-system'
 import { forceUnwrap } from '../fatal-error'
-import { git } from './core'
+import {
+  git,
+  IGitBufferExecutionOptions,
+  IGitBufferResult,
+  isMaxBufferExceededError,
+} from './core'
 import { NullTreeSHA } from './diff-index'
 import { GitError } from 'dugite'
 import { IChangesetData, parseRawLogWithNumstat } from './log'
@@ -67,7 +72,50 @@ const MaxCharactersPerLine = 5000
  * @param buffer A buffer of binary text from a spawned process
  */
 function isValidBuffer(buffer: Buffer) {
-  return buffer.length <= MaxDiffBufferSize
+  return !tooLargeDiffOutputs.has(buffer) && buffer.length <= MaxDiffBufferSize
+}
+
+/**
+ * Placeholder buffers standing in for diff output that exceeded
+ * `MaxDiffBufferSize`. See `gitDiff`.
+ */
+const tooLargeDiffOutputs = new WeakSet<Buffer>()
+
+/**
+ * Run a `git diff`-like command whose output is only rendered when it's at
+ * most `MaxDiffBufferSize` bytes.
+ *
+ * Rather than buffering all of the output (which for large generated or
+ * binary-ish files can be hundreds of megabytes) and rejecting it afterwards,
+ * Git is stopped as soon as the limit is exceeded and an empty placeholder
+ * buffer that `isValidBuffer` rejects is returned in place of the output.
+ */
+async function gitDiff(
+  args: string[],
+  path: string,
+  name: string,
+  options: IGitBufferExecutionOptions
+): Promise<IGitBufferResult> {
+  try {
+    return await git(args, path, name, {
+      ...options,
+      maxBuffer: MaxDiffBufferSize + 1,
+    })
+  } catch (e) {
+    if (!isMaxBufferExceededError(e)) {
+      throw e
+    }
+    const stdout = Buffer.alloc(0)
+    tooLargeDiffOutputs.add(stdout)
+    return {
+      stdout,
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      gitError: null,
+      gitErrorDescription: null,
+      path,
+    }
+  }
 }
 
 /** Is the buffer too large for us to reasonably represent? */
@@ -140,7 +188,7 @@ export async function getCommitDiff(
     args.push(ensureRelativePath(file.status.oldPath))
   }
 
-  const { stdout } = await git(args, repository.path, 'getCommitDiff', {
+  const { stdout } = await gitDiff(args, repository.path, 'getCommitDiff', {
     encoding: 'buffer',
   })
 
@@ -181,9 +229,14 @@ export async function getBranchMergeBaseDiff(
     args.push(ensureRelativePath(file.status.oldPath))
   }
 
-  const result = await git(args, repository.path, 'getBranchMergeBaseDiff', {
-    encoding: 'buffer',
-  })
+  const result = await gitDiff(
+    args,
+    repository.path,
+    'getBranchMergeBaseDiff',
+    {
+      encoding: 'buffer',
+    }
+  )
 
   return buildDiff(result.stdout, repository, file, latestCommit, latestCommit)
 }
@@ -227,7 +280,7 @@ export async function getCommitRangeDiff(
     args.push(ensureRelativePath(file.status.oldPath))
   }
 
-  const result = await git(args, repository.path, 'getCommitsDiff', {
+  const result = await gitDiff(args, repository.path, 'getCommitsDiff', {
     encoding: 'buffer',
     expectedErrors: new Set([GitError.BadRevision]),
   })
@@ -395,7 +448,7 @@ export async function getWorkingDirectoryDiff(
     args.push('HEAD', '--', ensureRelativePath(file.path))
   }
 
-  const { stdout, stderr } = await git(
+  const { stdout, stderr } = await gitDiff(
     args,
     repository.path,
     'getWorkingDirectoryDiff',
@@ -511,10 +564,15 @@ export async function getResolutionDiff(
       tempTarget,
     ]
 
-    const { stdout } = await git(args, repository.path, 'getResolutionDiff', {
-      successExitCodes: new Set([0, 1]),
-      encoding: 'buffer',
-    })
+    const { stdout } = await gitDiff(
+      args,
+      repository.path,
+      'getResolutionDiff',
+      {
+        successExitCodes: new Set([0, 1]),
+        encoding: 'buffer',
+      }
+    )
 
     if (!isValidBuffer(stdout)) {
       return {
