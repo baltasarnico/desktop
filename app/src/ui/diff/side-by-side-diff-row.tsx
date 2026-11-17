@@ -12,7 +12,11 @@ import { ILineTokens } from '../../lib/highlighter/types'
 import classNames from 'classnames'
 import { Octicon, OcticonSymbolVariant } from '../octicons'
 import * as octicons from '../octicons/octicons.generated'
-import { shallowEquals, structuralEquals } from '../../lib/equality'
+import {
+  arrayEquals,
+  shallowEquals,
+  structuralEquals,
+} from '../../lib/equality'
 import { DiffHunkExpansionType, DiffSelectionType } from '../../models/diff'
 import { PopoverAnchorPosition } from '../lib/popover'
 import { WhitespaceHintPopover } from './whitespace-hint-popover'
@@ -422,10 +426,42 @@ export class SideBySideDiffRow extends React.Component<
       return true
     }
 
-    const { row: prevRow, ...restPrevProps } = this.props
-    const { row: nextRow, ...restNextProps } = nextProps
+    const {
+      row: prevRow,
+      rowSelectableGroup: prevGroup,
+      beforeClassNames: prevBeforeClassNames,
+      afterClassNames: prevAfterClassNames,
+      ...restPrevProps
+    } = this.props
+    const {
+      row: nextRow,
+      rowSelectableGroup: nextGroup,
+      beforeClassNames: nextBeforeClassNames,
+      afterClassNames: nextAfterClassNames,
+      ...restNextProps
+    } = nextProps
 
     if (!structuralEquals(prevRow, nextRow)) {
+      return true
+    }
+
+    // The selectable group details and class names are recreated by the
+    // parent for every row on every render (e.g. whenever the hovered hunk
+    // changes), so compare them by value to avoid re-rendering every visible
+    // row when only a few of them changed.
+    if (
+      prevGroup !== nextGroup &&
+      (prevGroup === null ||
+        nextGroup === null ||
+        !shallowEquals(prevGroup, nextGroup))
+    ) {
+      return true
+    }
+
+    if (
+      !arrayEquals(prevBeforeClassNames, nextBeforeClassNames) ||
+      !arrayEquals(prevAfterClassNames, nextAfterClassNames)
+    ) {
       return true
     }
 
