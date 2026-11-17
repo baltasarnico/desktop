@@ -1,4 +1,5 @@
 import * as React from 'react'
+import memoizeOne from 'memoize-one'
 import classnames from 'classnames'
 
 import { SectionList, ClickSource } from '../lib/list/section-list'
@@ -209,6 +210,17 @@ export class SectionFilterList<
   IFilterListState<T, GroupIdentifier>
 > {
   private list: SectionList | null = null
+
+  /**
+   * Parents re-render this list on every app state update, so only redo the
+   * fuzzy matching when the groups or the filter text changed.
+   */
+  private readonly getGroupMatches = memoizeOne(
+    (
+      groups: ReadonlyArray<IFilterListGroup<T, GroupIdentifier>>,
+      filter: string
+    ) => matchGroups(groups, filter)
+  )
   private filterTextBox: TextBox | null = null
 
   public constructor(props: ISectionFilterListProps<T, GroupIdentifier>) {
@@ -218,13 +230,15 @@ export class SectionFilterList<
       this.filterTextBox = props.filterTextBox
     }
 
-    this.state = createStateUpdate(props, null)
+    this.state = createStateUpdate(props, null, this.getGroupMatches)
   }
 
   public componentWillReceiveProps(
     nextProps: ISectionFilterListProps<T, GroupIdentifier>
   ) {
-    this.setState(createStateUpdate(nextProps, this.state))
+    this.setState(
+      createStateUpdate(nextProps, this.state, this.getGroupMatches)
+    )
   }
 
   public componentDidUpdate(
@@ -711,12 +725,36 @@ function getFirstVisibleRow<T extends IFilterListItem, GroupIdentifier>(
   return InvalidRowIndexPath
 }
 
+/**
+ * Fuzzy match the items of every group against the filter. This is the
+ * expensive part of a state update, see `getGroupMatches` in the component.
+ */
+function matchGroups<T extends IFilterListItem, GroupIdentifier>(
+  groups: ReadonlyArray<IFilterListGroup<T, GroupIdentifier>>,
+  filter: string
+): ReadonlyArray<ReadonlyArray<IMatch<T>>> {
+  return groups.map(group =>
+    filter
+      ? match(filter, group.items, getText)
+      : group.items.map(item => ({
+          score: 1,
+          matches: { title: [], subtitle: [] },
+          item,
+        }))
+  )
+}
+
 function createStateUpdate<T extends IFilterListItem, GroupIdentifier>(
   props: ISectionFilterListProps<T, GroupIdentifier>,
-  state: IFilterListState<T, GroupIdentifier> | null
+  state: IFilterListState<T, GroupIdentifier> | null,
+  getGroupMatches: (
+    groups: ReadonlyArray<IFilterListGroup<T, GroupIdentifier>>,
+    filter: string
+  ) => ReadonlyArray<ReadonlyArray<IMatch<T>>> = matchGroups
 ) {
   const rows = new Array<Array<IFilterListRow<T, GroupIdentifier>>>()
   const filter = (props.filterText || '').toLowerCase()
+  const groupMatches = getGroupMatches(props.groups, filter)
   let selectedRow = InvalidRowIndexPath
   let section = 0
   const selectedItem = props.selectedItem
@@ -724,13 +762,7 @@ function createStateUpdate<T extends IFilterListItem, GroupIdentifier>(
 
   for (const [idx, group] of props.groups.entries()) {
     const groupRows = new Array<IFilterListRow<T, GroupIdentifier>>()
-    const items: ReadonlyArray<IMatch<T>> = filter
-      ? match(filter, group.items, getText)
-      : group.items.map(item => ({
-          score: 1,
-          matches: { title: [], subtitle: [] },
-          item,
-        }))
+    const items = groupMatches[idx]
 
     if (!items.length) {
       continue

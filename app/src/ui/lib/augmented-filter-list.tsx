@@ -23,6 +23,7 @@ import {
 } from './filter-list'
 import * as octicons from '../octicons/octicons.generated'
 import xor from 'lodash/xor'
+import memoizeOne from 'memoize-one'
 
 interface IFlattenedGroup {
   readonly kind: 'group'
@@ -248,6 +249,19 @@ export class AugmentedSectionFilterList<
   private list: SectionList | null = null
   private filterTextBox: TextBox | null = null
 
+  /**
+   * Parents re-render this list on every app state update, so only redo the
+   * filtering and matching when its inputs actually changed.
+   */
+  private readonly getFilteredRows = memoizeOne(
+    (
+      groups: ReadonlyArray<IFilterListGroup<T>>,
+      filter: string,
+      filterMethod: ((item: T) => boolean) | undefined,
+      showGroupHeaders: boolean
+    ) => computeFilteredRows(groups, filter, filterMethod, showGroupHeaders)
+  )
+
   public constructor(props: IAugmentedSectionFilterListProps<T>) {
     super(props)
 
@@ -255,20 +269,30 @@ export class AugmentedSectionFilterList<
       this.filterTextBox = props.filterTextBox
     }
 
-    this.state = createStateUpdate(props, null)
+    this.state = createStateUpdate(props, null, this.getFilteredRows)
   }
 
   public componentWillReceiveProps(
     nextProps: IAugmentedSectionFilterListProps<T>
   ) {
-    this.setState(createStateUpdate(nextProps, this.state))
+    this.setState(
+      createStateUpdate(nextProps, this.state, this.getFilteredRows)
+    )
   }
 
   public componentDidUpdate(
     prevProps: IAugmentedSectionFilterListProps<T>,
     prevState: IAugmentedSectionFilterListState<T>
   ) {
-    if (this.props.onSelectionChanged) {
+    const rowsChanged = prevState.rows !== this.state.rows
+    const selectionChanged =
+      rowsChanged ||
+      prevState.selectedRows.length !== this.state.selectedRows.length ||
+      prevState.selectedRows.some(
+        (row, i) => !rowIndexPathEquals(row, this.state.selectedRows[i])
+      )
+
+    if (this.props.onSelectionChanged && selectionChanged) {
       const oldSelectedItemIds = prevState.selectedRows
         .map(row => getItemIdFromRowIndex(prevState.rows, row))
         .filter(i => i !== null)
@@ -292,7 +316,7 @@ export class AugmentedSectionFilterList<
       }
     }
 
-    if (this.props.onFilterListResultsChanged !== undefined) {
+    if (this.props.onFilterListResultsChanged !== undefined && rowsChanged) {
       const oldFilteredIds = prevState.rows
         .flat()
         .filter(row => row.kind === 'item')
@@ -823,19 +847,37 @@ function getFirstVisibleRow<T extends IFilterListItem>(
   return InvalidRowIndexPath
 }
 
-function createStateUpdate<T extends IFilterListItem>(
-  props: IAugmentedSectionFilterListProps<T>,
-  state: IAugmentedSectionFilterListState<T> | null
-) {
-  const rows = new Array<Array<IFilterListRow<T>>>()
-  const filter = (props.filterText || '').toLowerCase()
-  const { filterMethod, selectedItems } = props
-  const selectedRows = []
-  let section = 0
-  const groupIndices = []
-  let filterValueChanged = state?.filterValueChanged ? true : filter.length > 0
+interface IFilteredRows<T extends IFilterListItem> {
+  readonly rows: ReadonlyArray<ReadonlyArray<IFilterListRow<T>>>
+  /** Indices of groups in the filtered list */
+  readonly groupIndices: ReadonlyArray<number>
+  /** Whether the filter or filter method excluded at least one item */
+  readonly someItemsFilteredOut: boolean
+}
 
-  for (const [idx, group] of props.groups.entries()) {
+type FilteredRowsGetter<T extends IFilterListItem> = (
+  groups: ReadonlyArray<IFilterListGroup<T>>,
+  filter: string,
+  filterMethod: ((item: T) => boolean) | undefined,
+  showGroupHeaders: boolean
+) => IFilteredRows<T>
+
+/**
+ * Build the visible rows for the given groups and filter. This is the
+ * expensive part of a state update (fuzzy matching every item), so components
+ * memoize it and only call it again when one of its inputs changed.
+ */
+function computeFilteredRows<T extends IFilterListItem>(
+  groups: ReadonlyArray<IFilterListGroup<T>>,
+  filter: string,
+  filterMethod: ((item: T) => boolean) | undefined,
+  showGroupHeaders: boolean
+): IFilteredRows<T> {
+  const rows = new Array<Array<IFilterListRow<T>>>()
+  const groupIndices = []
+  let someItemsFilteredOut = false
+
+  for (const [idx, group] of groups.entries()) {
     const groupRows = new Array<IFilterListRow<T>>()
 
     const itemsToMatch = filterMethod
@@ -851,7 +893,7 @@ function createStateUpdate<T extends IFilterListItem>(
         }))
 
     if (group.items.length !== items.length) {
-      filterValueChanged = true
+      someItemsFilteredOut = true
     }
 
     if (!items.length) {
@@ -860,24 +902,44 @@ function createStateUpdate<T extends IFilterListItem>(
 
     groupIndices.push(idx)
 
-    if (props.renderGroupHeader && group.showHeader !== false) {
+    if (showGroupHeaders && group.showHeader !== false) {
       groupRows.push({ kind: 'group', identifier: group.identifier })
     }
 
     for (const { item, matches } of items) {
-      if (selectedItems.some(si => item.id === si.id)) {
-        selectedRows.push({
-          section,
-          row: groupRows.length,
-        })
-      }
-
       groupRows.push({ kind: 'item', item, matches })
     }
 
     rows.push(groupRows)
-    section++
   }
+
+  return { rows, groupIndices, someItemsFilteredOut }
+}
+
+function createStateUpdate<T extends IFilterListItem>(
+  props: IAugmentedSectionFilterListProps<T>,
+  state: IAugmentedSectionFilterListState<T> | null,
+  getFilteredRows: FilteredRowsGetter<T> = computeFilteredRows
+) {
+  const filter = (props.filterText || '').toLowerCase()
+  const { rows, groupIndices, someItemsFilteredOut } = getFilteredRows(
+    props.groups,
+    filter,
+    props.filterMethod,
+    props.renderGroupHeader !== undefined
+  )
+
+  // A set keeps this linear in the number of rows, rather than rows times
+  // selected items (which with everything selected is quadratic).
+  const selectedIds = new Set(props.selectedItems.map(si => si.id))
+  const selectedRows = new Array<RowIndexPath>()
+  rows.forEach((groupRows, section) =>
+    groupRows.forEach((row, rowIndex) => {
+      if (row.kind === 'item' && selectedIds.has(row.item.id)) {
+        selectedRows.push({ section, row: rowIndex })
+      }
+    })
+  )
 
   if (selectedRows.length === 0 && filter.length) {
     // If the selected item isn't in the list (e.g., filtered out), then
@@ -885,8 +947,13 @@ function createStateUpdate<T extends IFilterListItem>(
     selectedRows.push(getFirstVisibleRow(rows))
   }
 
+  const filterValueChanged =
+    state?.filterValueChanged === true ||
+    filter.length > 0 ||
+    someItemsFilteredOut
+
   return {
-    rows: rows,
+    rows,
     selectedRows,
     filterValue: filter,
     filterValueChanged,

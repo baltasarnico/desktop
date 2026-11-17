@@ -1,4 +1,5 @@
 import * as React from 'react'
+import memoizeOne from 'memoize-one'
 import classnames from 'classnames'
 
 import {
@@ -207,6 +208,17 @@ export class FilterList<
   IFilterListState<T, GroupIdentifier>
 > {
   private list: List | null = null
+
+  /**
+   * Parents re-render this list on every app state update, so only redo the
+   * fuzzy matching when the groups or the filter text changed.
+   */
+  private readonly getGroupMatches = memoizeOne(
+    (
+      groups: ReadonlyArray<IFilterListGroup<T, GroupIdentifier>>,
+      filter: string
+    ) => matchGroups(groups, filter)
+  )
   private filterTextBox: TextBox | null = null
 
   public constructor(props: IFilterListProps<T, GroupIdentifier>) {
@@ -216,13 +228,15 @@ export class FilterList<
       this.filterTextBox = props.filterTextBox
     }
 
-    this.state = createStateUpdate(props, null)
+    this.state = createStateUpdate(props, null, this.getGroupMatches)
   }
 
   public componentWillReceiveProps(
     nextProps: IFilterListProps<T, GroupIdentifier>
   ) {
-    this.setState(createStateUpdate(nextProps, this.state))
+    this.setState(
+      createStateUpdate(nextProps, this.state, this.getGroupMatches)
+    )
   }
 
   public componentDidUpdate(
@@ -600,21 +614,39 @@ export function getText<T extends IFilterListItem>(
   return item['text']
 }
 
-function createStateUpdate<T extends IFilterListItem, GroupIdentifier>(
-  props: IFilterListProps<T, GroupIdentifier>,
-  state: IFilterListState<T, GroupIdentifier> | null
-) {
-  const flattenedRows = new Array<IFilterListRow<T, GroupIdentifier>>()
-  const filter = (props.filterText || '').toLowerCase()
-
-  for (const group of props.groups) {
-    const items: ReadonlyArray<IMatch<T>> = filter
+/**
+ * Fuzzy match the items of every group against the filter. This is the
+ * expensive part of a state update, see `getGroupMatches` in the component.
+ */
+function matchGroups<T extends IFilterListItem, GroupIdentifier>(
+  groups: ReadonlyArray<IFilterListGroup<T, GroupIdentifier>>,
+  filter: string
+): ReadonlyArray<ReadonlyArray<IMatch<T>>> {
+  return groups.map(group =>
+    filter
       ? match(filter, group.items, getText)
       : group.items.map(item => ({
           score: 1,
           matches: { title: [], subtitle: [] },
           item,
         }))
+  )
+}
+
+function createStateUpdate<T extends IFilterListItem, GroupIdentifier>(
+  props: IFilterListProps<T, GroupIdentifier>,
+  state: IFilterListState<T, GroupIdentifier> | null,
+  getGroupMatches: (
+    groups: ReadonlyArray<IFilterListGroup<T, GroupIdentifier>>,
+    filter: string
+  ) => ReadonlyArray<ReadonlyArray<IMatch<T>>> = matchGroups
+) {
+  const flattenedRows = new Array<IFilterListRow<T, GroupIdentifier>>()
+  const filter = (props.filterText || '').toLowerCase()
+  const groupMatches = getGroupMatches(props.groups, filter)
+
+  for (const [idx, group] of props.groups.entries()) {
+    const items = groupMatches[idx]
 
     if (!items.length) {
       continue
