@@ -218,7 +218,7 @@ describe('AppStore repository indicators', () => {
       false
     )
     const gitStore = appStore['gitStoreCache'].get(repository)
-    appStore['localRepositoryStateLookup'].set(repository.id, {
+    appStore['setLocalRepositoryState'](repository.id, {
       changedFilesCount: 1,
       aheadBehind: { ahead: 1, behind: 0 },
     })

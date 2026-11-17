@@ -232,4 +232,27 @@ describe('AppStore branch comparison and repository memory', () => {
     appStore['pruneCommitLookup'](repository)
     assert.equal(gitStore.commitLookup.size, before)
   })
+
+  it('returns the same repositories array while nothing changed', async () => {
+    const first = appStore.getState().repositories
+    assert.strictEqual(appStore.getState().repositories, first)
+  })
+
+  it('only replaces the indicator lookup when an indicator changes', () => {
+    const before = appStore.getState().localRepositoryStateLookup
+    const state = { changedFilesCount: 2, aheadBehind: { ahead: 1, behind: 0 } }
+    appStore['setLocalRepositoryState'](9999, state)
+    const changed = appStore.getState().localRepositoryStateLookup
+    assert.notStrictEqual(changed, before)
+    assert.deepEqual(changed.get(9999), state)
+
+    appStore['setLocalRepositoryState'](9999, { ...state })
+    assert.strictEqual(appStore.getState().localRepositoryStateLookup, changed)
+
+    appStore['setLocalRepositoryState'](9999, null)
+    assert.equal(
+      appStore.getState().localRepositoryStateLookup.has(9999),
+      false
+    )
+  })
 })

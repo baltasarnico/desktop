@@ -1,3 +1,4 @@
+import { arrayEquals } from '../equality'
 import { storePushAfterCommit } from './helpers/commit-push-storage'
 import { verifyRepositoryGitSpawnFence } from '../git/repository-operation'
 import { AssistedCommitCoordinator } from '../assisted-commit/coordinator'
@@ -656,10 +657,21 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private currentBanner: Banner | null = null
   private emitQueued = false
 
-  private readonly localRepositoryStateLookup = new Map<
+  /**
+   * Replaced (never mutated) whenever an entry changes, so that consumers can
+   * rely on reference equality to know whether anything changed.
+   */
+  private localRepositoryStateLookup: ReadonlyMap<
     number,
     ILocalRepositoryState
-  >()
+  > = new Map()
+
+  /** See `getAllRepositories` */
+  private allRepositoriesCache: {
+    readonly repositories: ReadonlyArray<Repository>
+    readonly cloning: ReadonlyArray<CloningRepository>
+    readonly all: ReadonlyArray<Repository | CloningRepository>
+  } | null = null
 
   /** Map from shortcut (e.g., :+1:) to on disk URL. */
   private emoji = new Map<string, Emoji>()
@@ -1397,11 +1409,63 @@ export class AppStore extends TypedBaseStore<IAppState> {
     }
   }
 
+  /**
+   * All repositories, including the ones being cloned. The same array is
+   * returned as long as neither list changed so memoized consumers (such as
+   * the repository list's grouping) don't redo their work on every update.
+   */
+  private getAllRepositories(): ReadonlyArray<Repository | CloningRepository> {
+    const cloning = this.cloningRepositoriesStore.repositories
+    const cached = this.allRepositoriesCache
+    if (
+      cached !== null &&
+      cached.repositories === this.repositories &&
+      arrayEquals(cached.cloning, cloning)
+    ) {
+      return cached.all
+    }
+
+    const all = [...this.repositories, ...cloning]
+    this.allRepositoriesCache = {
+      repositories: this.repositories,
+      cloning,
+      all,
+    }
+    return all
+  }
+
+  /**
+   * Set (or with `null`, clear) the sidebar indicator state of a repository,
+   * replacing the lookup only when the state actually changed.
+   */
+  private setLocalRepositoryState(
+    repositoryId: number,
+    state: ILocalRepositoryState | null
+  ) {
+    const current = this.localRepositoryStateLookup.get(repositoryId)
+    const unchanged =
+      state === null
+        ? current === undefined
+        : current !== undefined &&
+          current.changedFilesCount === state.changedFilesCount &&
+          current.aheadBehind?.ahead === state.aheadBehind?.ahead &&
+          current.aheadBehind?.behind === state.aheadBehind?.behind
+
+    if (unchanged) {
+      return
+    }
+
+    const lookup = new Map(this.localRepositoryStateLookup)
+    if (state === null) {
+      lookup.delete(repositoryId)
+    } else {
+      lookup.set(repositoryId, state)
+    }
+    this.localRepositoryStateLookup = lookup
+  }
+
   public getState(): IAppState {
-    const repositories = [
-      ...this.repositories,
-      ...this.cloningRepositoriesStore.repositories,
-    ]
+    const repositories = this.getAllRepositories()
 
     return {
       accounts: this.accounts,
@@ -4573,19 +4637,17 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     status: IStatusResult | null
   ): void {
-    const lookup = this.localRepositoryStateLookup
-
     if (repository.missing) {
-      lookup.delete(repository.id)
+      this.setLocalRepositoryState(repository.id, null)
       return
     }
 
     if (status === null) {
-      lookup.delete(repository.id)
+      this.setLocalRepositoryState(repository.id, null)
       return
     }
 
-    lookup.set(repository.id, {
+    this.setLocalRepositoryState(repository.id, {
       aheadBehind: status.branchAheadBehind || null,
       changedFilesCount: status.workingDirectory.files.length,
     })
@@ -4606,23 +4668,21 @@ export class AppStore extends TypedBaseStore<IAppState> {
   private async refreshIndicatorForRepositoryCore(
     repository: Repository
   ): Promise<void> {
-    const lookup = this.localRepositoryStateLookup
-
     if (repository.missing) {
-      lookup.delete(repository.id)
+      this.setLocalRepositoryState(repository.id, null)
       return
     }
 
     const exists = await pathExists(repository.path)
     if (!exists) {
-      lookup.delete(repository.id)
+      this.setLocalRepositoryState(repository.id, null)
       return
     }
 
     const gitStore = this.gitStoreCache.get(repository)
     const status = await gitStore.loadStatus()
     if (status === null) {
-      lookup.delete(repository.id)
+      this.setLocalRepositoryState(repository.id, null)
       return
     }
 
@@ -4645,8 +4705,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
     if (await this.shouldBackgroundFetch(repository, lastPush)) {
       const aheadBehind = await this.fetchForRepositoryIndicator(repository)
 
-      const existing = lookup.get(repository.id)
-      lookup.set(repository.id, {
+      const existing = this.localRepositoryStateLookup.get(repository.id)
+      this.setLocalRepositoryState(repository.id, {
         aheadBehind: aheadBehind,
         // We don't need to update changedFilesCount here since it was already
         // set when calling `updateSidebarIndicator()` with the status object.
