@@ -484,27 +484,32 @@ export abstract class AutocompletingTextInput<
   // and the scroll position, it should be called whenever the caret moves (on
   // text changes) or the scroll position changes.
   private updateCaretCoordinates = () => {
+    this.setState({ caretCoordinates: this.measureCaretCoordinates() })
+  }
+
+  // Measuring the caret clones the element into the document and forces a
+  // synchronous layout, so only do it when the caret is actually used to
+  // anchor the autocompletion popup.
+  private measureCaretCoordinates(): ReturnType<
+    typeof getCaretCoordinates
+  > | null {
     const element = this.element
     if (!element) {
-      this.setState({ caretCoordinates: null })
-      return
+      return null
     }
 
     const selectionEnd = element.selectionEnd
     if (selectionEnd === null) {
-      this.setState({ caretCoordinates: null })
-      return
+      return null
     }
 
     const caretCoordinates = getCaretCoordinates(element, selectionEnd)
 
-    this.setState({
-      caretCoordinates: {
-        top: caretCoordinates.top - element.scrollTop,
-        left: caretCoordinates.left - element.scrollLeft,
-        height: caretCoordinates.height,
-      },
-    })
+    return {
+      top: caretCoordinates.top - element.scrollTop,
+      left: caretCoordinates.left - element.scrollLeft,
+      height: caretCoordinates.height,
+    }
   }
 
   private renderInvisibleCaret = () => {
@@ -802,7 +807,9 @@ export abstract class AutocompletingTextInput<
   }
 
   private onScroll = () => {
-    this.updateCaretCoordinates()
+    if (this.state.autocompletionState !== null) {
+      this.updateCaretCoordinates()
+    }
   }
 
   private onChange = async (event: React.FormEvent<ElementType>) => {
@@ -815,8 +822,6 @@ export abstract class AutocompletingTextInput<
     if (this.props.onValueChanged) {
       this.props.onValueChanged(str)
     }
-
-    this.updateCaretCoordinates()
 
     return this.open(str)
   }
@@ -850,6 +855,20 @@ export abstract class AutocompletingTextInput<
       return
     }
 
-    this.setState({ autocompletionState })
+    if (autocompletionState === null) {
+      // Avoid a re-render on every keystroke while there's nothing to show.
+      if (this.state.autocompletionState !== null) {
+        this.setState({ autocompletionState })
+      }
+      return
+    }
+
+    this.setState({
+      autocompletionState,
+      caretCoordinates:
+        this.props.anchorToCaret === false
+          ? this.state.caretCoordinates
+          : this.measureCaretCoordinates(),
+    })
   }
 }
