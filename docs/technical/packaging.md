@@ -137,6 +137,10 @@ Protocol handlers are registered by the installer through the `.desktop` file
 (`script/linux/github-desktop.desktop`); the app doesn't register them itself
 on Linux. The URL is passed to the app as a command line argument.
 
+Linux builds run without hardware acceleration and with the GPU work in the
+main process (`--in-process-gpu`), which saves ~100 MB without affecting
+scrolling. Set `GITHUB_DESKTOP_ENABLE_HARDWARE_ACCELERATION=1` to use the GPU.
+
 ## `script/publish.ts`
 
 This script uploads the packaging artifacts to our S3 bucket, which is then

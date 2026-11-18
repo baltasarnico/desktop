@@ -28,6 +28,8 @@ import { getRebaseInternalState } from './rebase'
 import { RebaseInternalState } from '../../models/rebase'
 import { isCherryPickHeadFound } from './cherry-pick'
 import { git } from '.'
+import { getBooleanConfigValue } from './config'
+import { withRepositoryGitOperation } from './repository-operation'
 
 /** The encapsulation of the result from 'git status' */
 export interface IStatusResult {
@@ -508,4 +510,41 @@ async function getConflictDetails(
     conflictCountsByPath: new Map<string, number>(),
     binaryFilePaths: new Array<string>(),
   }
+}
+
+/**
+ * Make Git save its untracked cache for the repository.
+ *
+ * Desktop only reads status without taking optional locks, so Git never gets
+ * to write its untracked cache to the index and every status has to scan the
+ * whole working directory for untracked files. This runs one status that is
+ * allowed to update the index (as a mutation, so it waits for and is admitted
+ * like any other index write) with the cache enabled. Later read-only status
+ * calls reuse the cache, which in testing made them several times faster.
+ *
+ * Does nothing when the user disabled the cache (`core.untrackedCache=false`).
+ */
+export async function warmUntrackedCache(
+  repository: Repository
+): Promise<void> {
+  if (
+    (await getBooleanConfigValue(repository, 'core.untrackedCache')) === false
+  ) {
+    return
+  }
+
+  await withRepositoryGitOperation(repository.path, 'mutation', () =>
+    git(
+      [
+        '-c',
+        'core.untrackedCache=true',
+        'status',
+        '--untracked-files=all',
+        '--porcelain',
+        '-z',
+      ],
+      repository.path,
+      'warmUntrackedCache'
+    )
+  )
 }

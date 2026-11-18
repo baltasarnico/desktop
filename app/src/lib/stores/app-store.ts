@@ -270,6 +270,7 @@ import {
   getGlobalConfigPath,
   getFilesDiffText,
   git,
+  warmUntrackedCache,
 } from '../git'
 import {
   installGlobalLFSFilters,
@@ -2609,7 +2610,9 @@ export class AppStore extends TypedBaseStore<IAppState> {
     repository: Repository,
     previouslySelectedRepository: Repository | CloningRepository | null
   ): Promise<Repository | null> {
-    this._refreshRepository(repository)
+    this._refreshRepository(repository).then(() =>
+      this.warmUntrackedCacheAfterRefresh(repository)
+    )
 
     if (isRepositoryWithGitHubRepository(repository)) {
       // Load issues from the upstream or fork depending
@@ -2642,6 +2645,24 @@ export class AppStore extends TypedBaseStore<IAppState> {
     this.addUpstreamRemoteIfNeeded(repository)
 
     return this.repositoryWithRefreshedGitHubRepository(repository)
+  }
+
+  /**
+   * Let Git save its untracked cache once the repository has been refreshed,
+   * see `warmUntrackedCache`. Skipped while an assisted commit owns the
+   * repository; failures (e.g. the index being locked by another Git process)
+   * are harmless, status just stays slower until the next selection.
+   */
+  private async warmUntrackedCacheAfterRefresh(repository: Repository) {
+    if (repository.missing || isRepositoryGitPaused(repository.path)) {
+      return
+    }
+
+    try {
+      await warmUntrackedCache(repository)
+    } catch (e) {
+      log.warn(`Could not warm the untracked cache for ${repository.name}`, e)
+    }
   }
 
   private stopBackgroundPruner() {

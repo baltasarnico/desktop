@@ -341,6 +341,17 @@ if (process.env.GITHUB_DESKTOP_DISABLE_HARDWARE_ACCELERATION) {
     `GITHUB_DESKTOP_DISABLE_HARDWARE_ACCELERATION environment variable set, disabling hardware acceleration`
   )
   app.disableHardwareAcceleration()
+} else if (
+  __LINUX__ &&
+  process.env.GITHUB_DESKTOP_ENABLE_HARDWARE_ACCELERATION === undefined
+) {
+  // Desktop's UI is mostly static and renders just as smoothly in software,
+  // while the GPU process alone takes ~100 MB. Without hardware acceleration
+  // the remaining (software) GPU work can run in the main process instead of
+  // a process of its own. Set GITHUB_DESKTOP_ENABLE_HARDWARE_ACCELERATION to
+  // opt back in.
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('in-process-gpu')
 }
 
 app.on('ready', () => {
