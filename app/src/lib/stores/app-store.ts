@@ -262,7 +262,6 @@ import {
   moveWorktree,
   getCommitRangeDiff,
   getCommitRangeChangedFiles,
-  updateRemoteHEAD,
   getBranchMergeBaseChangedFiles,
   getBranchMergeBaseDiff,
   checkoutCommit,
@@ -6543,7 +6542,7 @@ export class AppStore extends TypedBaseStore<IAppState> {
           }
 
           let aborted = false
-          const pullSucceeded = await gitStore
+          await gitStore
             .performFailableOperation(
               async () => {
                 await pullRepo(repository, remote, {
@@ -6561,19 +6560,8 @@ export class AppStore extends TypedBaseStore<IAppState> {
             )
             .catch(err => (aborted ? false : Promise.reject(err)))
 
-          // If the pull failed we shouldn't try to update the remote HEAD
-          // because there's a decent chance that it failed either because we
-          // didn't have the correct credentials (which we won't this time
-          // either) or because there's a network error which likely will
-          // persist for the next operation as well.
-          if (pullSucceeded) {
-            // Updating the local HEAD symref isn't critical so we don't want
-            // to show an error message to the user and have them retry the
-            // entire pull operation if it fails.
-            await updateRemoteHEAD(repository, remote, false).catch(e =>
-              log.error('Failed updating remote HEAD', e)
-            )
-          }
+          // The pull keeps the remote's HEAD up to date itself (see
+          // followRemoteHEADArgs), no need to connect to the remote again.
 
           const refreshStartProgress = pullWeight + fetchWeight
           const refreshTitle = __DARWIN__

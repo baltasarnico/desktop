@@ -6,17 +6,38 @@ import { IRemote } from '../../models/remote'
 import { ITrackingBranch } from '../../models/branch'
 import { envForRemoteOperation } from './environment'
 
+/**
+ * Configuration that makes a fetch from (or pull with) the given remotes keep
+ * `refs/remotes/<remote>/HEAD` pointing at the remote's default branch.
+ *
+ * Git learns the remote's HEAD while fetching anyway, so this replaces running
+ * `git remote set-head -a` afterwards, which connects to the remote a second
+ * time.
+ */
+export function followRemoteHEADArgs(
+  remotes: ReadonlyArray<string>
+): ReadonlyArray<string> {
+  return remotes.flatMap(remote => [
+    '-c',
+    `remote.${remote}.followRemoteHEAD=always`,
+  ])
+}
+
 async function getFetchArgs(
-  remote: string,
+  remotes: ReadonlyArray<string>,
   progressCallback: ((progress: IFetchProgress) => void) | undefined
 ) {
   return [
+    ...followRemoteHEADArgs(remotes),
     'fetch',
     ...(progressCallback ? ['--progress'] : []),
     '--prune',
     '--recurse-submodules=on-demand',
+    // Fetch several remotes in one go, connecting to them in parallel rather
+    // than one after the other.
+    ...(remotes.length > 1 ? ['--multiple', `--jobs=${remotes.length}`] : []),
     '--',
-    remote,
+    ...remotes,
   ]
 }
 
@@ -84,9 +105,80 @@ export async function fetch(
     progressCallback({ kind, title, value: 0, remote: remote.name })
   }
 
-  const args = await getFetchArgs(remote.name, progressCallback)
+  const args = await getFetchArgs([remote.name], progressCallback)
 
   await git(args, repository.path, 'fetch', opts)
+}
+
+/**
+ * Fetch from several remotes at once, in a single parallel Git process.
+ *
+ * All remotes must share the same remote operation environment (see
+ * `canFetchTogether`) as the process can only have one.
+ */
+export async function fetchMultiple(
+  repository: Repository,
+  remotes: ReadonlyArray<IRemote>,
+  progressCallback?: (progress: IFetchProgress) => void,
+  isBackgroundTask = false
+): Promise<void> {
+  if (remotes.length === 0) {
+    return
+  }
+
+  let opts: IGitStringExecutionOptions = {
+    successExitCodes: new Set([0]),
+    env: await envForRemoteOperation(remotes[0].url),
+  }
+  const remoteNames = remotes.map(r => r.name)
+
+  if (progressCallback) {
+    const title = `Fetching ${remoteNames.join(', ')}`
+    const kind = 'fetch'
+    const remote = remoteNames.join(', ')
+
+    opts = await executionOptionsWithProgress(
+      { ...opts, trackLFSProgress: true, isBackgroundTask },
+      new FetchProgressParser(),
+      progress => {
+        if (progress.kind === 'context') {
+          if (!progress.text.startsWith('remote: Counting objects')) {
+            return
+          }
+        }
+
+        const description =
+          progress.kind === 'progress' ? progress.details.text : progress.text
+
+        progressCallback({
+          kind,
+          title,
+          description,
+          value: progress.percent,
+          remote,
+        })
+      }
+    )
+
+    progressCallback({ kind, title, value: 0, remote })
+  }
+
+  const args = await getFetchArgs(remoteNames, progressCallback)
+
+  await git(args, repository.path, 'fetch', opts)
+}
+
+/**
+ * Whether the remotes can be fetched by a single Git process, which requires
+ * them to need the same environment (e.g. proxy settings).
+ */
+export async function canFetchTogether(
+  remotes: ReadonlyArray<IRemote>
+): Promise<boolean> {
+  const environments = await Promise.all(
+    remotes.map(async r => JSON.stringify(await envForRemoteOperation(r.url)))
+  )
+  return new Set(environments).size <= 1
 }
 
 /** Fetch a given refspec from the given remote. */

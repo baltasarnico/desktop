@@ -12,6 +12,7 @@ import { PullProgressParser, executionOptionsWithProgress } from '../progress'
 import { IRemote } from '../../models/remote'
 import { envForRemoteOperation } from './environment'
 import { getConfigValue } from './config'
+import { followRemoteHEADArgs } from './fetch'
 
 /**
  * Pull from the specified remote.
@@ -102,6 +103,9 @@ export async function pull(
 
   const args = [
     ...gitRebaseArguments(),
+    // Keep the remote's HEAD up to date as part of the pull's fetch, rather
+    // than with a second connection afterwards.
+    ...followRemoteHEADArgs([remote.name]),
     'pull',
     ...(await getDefaultPullDivergentBranchArguments(repository)),
     '--recurse-submodules',

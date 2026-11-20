@@ -35,6 +35,8 @@ import {
   GitResetMode,
   getRemotes,
   fetch as fetchRepo,
+  fetchMultiple,
+  canFetchTogether,
   fetchRefspec,
   getRecentBranches,
   getBranches,
@@ -71,7 +73,6 @@ import {
   deleteTag,
   MergeResult,
   createBranch,
-  updateRemoteHEAD,
   getRemoteHEAD,
   MergeOptions,
 } from '../git'
@@ -1176,6 +1177,24 @@ export class GitStore extends BaseStore {
       return
     }
 
+    // Fetching several remotes (e.g. a fork's origin and upstream) in one
+    // parallel Git process saves a full network round trip per extra remote.
+    // Should that fail for any reason, fall back to fetching them one by one
+    // which reports errors for each remote like before.
+    if (remotes.length > 1 && (await canFetchTogether(remotes))) {
+      try {
+        await fetchMultiple(
+          this.repository,
+          remotes,
+          progressCallback,
+          backgroundTask
+        )
+        return
+      } catch (e) {
+        log.warn('Fetching remotes together failed, fetching one by one', e)
+      }
+    }
+
     const weight = 1 / remotes.length
 
     for (let i = 0; i < remotes.length; i++) {
@@ -1212,27 +1231,15 @@ export class GitStore extends BaseStore {
       type: RetryActionType.Fetch,
       repository: repo,
     }
-    const fetchSucceeded = await this.performFailableOperation(
+    // The fetch keeps the remote's HEAD up to date itself (see
+    // followRemoteHEADArgs), no need to connect to the remote again.
+    await this.performFailableOperation(
       async () => {
         await fetchRepo(repo, remote, progressCallback, backgroundTask)
         return true
       },
       { backgroundTask, retryAction }
     )
-
-    // If the pull failed we shouldn't try to update the remote HEAD
-    // because there's a decent chance that it failed either because we
-    // didn't have the correct credentials (which we won't this time
-    // either) or because there's a network error which likely will
-    // persist for the next operation as well.
-    if (fetchSucceeded) {
-      // Updating the local HEAD symref isn't critical so we don't want
-      // to show an error message to the user and have them retry the
-      // entire pull operation if it fails.
-      await updateRemoteHEAD(repo, remote, backgroundTask).catch(e =>
-        log.error('Failed updating remote HEAD', e)
-      )
-    }
   }
 
   /**
